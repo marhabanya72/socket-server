@@ -1,0 +1,16 @@
+{
+  "name": "n1verse-socket-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.4",
+    "mysql2": "^3.6.5",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "crypto-js": "^4.2.0",
+    "uuid": "^9.0.1"
+  }
+}
