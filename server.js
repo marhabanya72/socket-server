@@ -1,7 +1,6 @@
 // /Users/macbook/Documents/n1verse/server.js
 const { createServer } = require('http');
 const { parse } = require('url');
-const next = require('next');
 const { Server } = require('socket.io');
 
 // Import database functions for balance updates
