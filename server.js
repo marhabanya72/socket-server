@@ -1,4 +1,4 @@
-// Complete Socket.IO server for Railway deployment
+// Complete Socket.IO server for Railway deployment - UPDATED
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -22,7 +22,7 @@ const io = new Server(httpServer, {
 });
 
 // Database setup
-let UserDatabase, RPSDatabase;
+let UserDatabase, RPSDatabase, DiceDatabase;
 
 try {
   const mysql = require('mysql2/promise');
@@ -76,7 +76,76 @@ try {
     }
   };
 
-  // RPS Database functions
+  // Dice Database functions
+  DiceDatabase = {
+    createGame: async (gameData) => {
+      try {
+        const connection = await pool.getConnection();
+        await connection.execute(
+          `INSERT INTO dice_games (id, server_seed, hashed_seed, public_seed, nonce)
+           VALUES (?, ?, ?, ?, ?)`,
+          [gameData.id, gameData.serverSeed, gameData.hashedSeed, gameData.publicSeed || null, gameData.nonce]
+        );
+        connection.release();
+        console.log(`🎲 Database: Game created ${gameData.id}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database createGame error:', error);
+        return false;
+      }
+    },
+    completeGame: async (gameId, result) => {
+      try {
+        const connection = await pool.getConnection();
+        await connection.execute(
+          `UPDATE dice_games SET 
+           dice_value = ?, is_odd = ?, total_wagered = ?, total_payout = ?, 
+           players_count = ?, status = 'complete', completed_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [result.diceValue, result.isOdd, result.totalWagered, result.totalPayout, result.playersCount, gameId]
+        );
+        connection.release();
+        console.log(`🎲 Database: Game completed ${gameId}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database completeGame error:', error);
+        return false;
+      }
+    },
+    placeBet: async (betData) => {
+      try {
+        const connection = await pool.getConnection();
+        await connection.execute(
+          `INSERT INTO dice_bets (id, game_id, user_id, amount, choice)
+           VALUES (?, ?, ?, ?, ?)`,
+          [betData.id, betData.gameId, betData.userId, betData.amount, betData.choice]
+        );
+        connection.release();
+        console.log(`🎲 Database: Bet placed ${betData.id}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database placeBet error:', error);
+        return false;
+      }
+    },
+    updateBetResult: async (betId, isWinner, payout) => {
+      try {
+        const connection = await pool.getConnection();
+        await connection.execute(
+          'UPDATE dice_bets SET is_winner = ?, payout = ? WHERE id = ?',
+          [isWinner, payout, betId]
+        );
+        connection.release();
+        console.log(`🎲 Database: Bet result updated ${betId}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database updateBetResult error:', error);
+        return false;
+      }
+    }
+  };
+
+  // RPS Database functions (keeping existing)
   RPSDatabase = {
     createLobby: async (lobbyData) => {
       try {
@@ -267,6 +336,12 @@ try {
       return Promise.resolve(false);
     }
   };
+  DiceDatabase = {
+    createGame: async () => console.log('📝 Mock: createGame called'),
+    completeGame: async () => console.log('📝 Mock: completeGame called'),
+    placeBet: async () => console.log('📝 Mock: placeBet called'),
+    updateBetResult: async () => console.log('📝 Mock: updateBetResult called')
+  };
   RPSDatabase = {
     createLobby: async () => console.log('📝 Mock: createLobby called'),
     createBattle: async () => console.log('📝 Mock: createBattle called'),
@@ -316,6 +391,22 @@ async function safeUpdateUserStats(userId, wagered, won) {
   }
 }
 
+async function safeDiceDatabase(functionName, ...args) {
+  try {
+    if (DiceDatabase && typeof DiceDatabase[functionName] === 'function') {
+      const result = await DiceDatabase[functionName](...args);
+      console.log(`✅ Dice Database ${functionName} completed successfully`);
+      return result;
+    } else {
+      console.log(`📝 Mock Dice Database ${functionName} called with args:`, args);
+      return null;
+    }
+  } catch (error) {
+    console.error(`❌ Error in Dice Database ${functionName}:`, error);
+    return null;
+  }
+}
+
 async function safeRPSDatabase(functionName, ...args) {
   try {
     if (RPSDatabase && typeof RPSDatabase[functionName] === 'function') {
@@ -337,7 +428,8 @@ const gameState = {
   dice: {
     currentGame: null,
     history: [],
-    players: new Map()
+    players: new Map(),
+    gameCounter: 0
   },
   rps: {
     lobbies: new Map(),
@@ -352,7 +444,8 @@ const gameState = {
 
 // Utility functions
 function generateGameId() {
-  return `dice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  gameState.dice.gameCounter++;
+  return `dice_${Date.now()}_${gameState.dice.gameCounter}`;
 }
 
 function generateLobbyId() {
@@ -468,53 +561,114 @@ io.on('connection', (socket) => {
     socket.userData = userData;
   });
 
-  // Dice Game Events
+  // Dice Game Events - IMPROVED
   socket.on('join-dice', (userData) => {
+    console.log(`🎲 User joining dice room: ${userData?.username} (${socket.id})`);
     socket.join('dice-room');
     socket.userData = userData;
     
-    // Send current game state
+    // Always send current game state when someone joins
     if (gameState.dice.currentGame) {
-      socket.emit('dice-game-state', gameState.dice.currentGame);
+      console.log(`🎲 Sending current game state to ${userData?.username}:`, {
+        gameId: gameState.dice.currentGame.id,
+        phase: gameState.dice.currentGame.phase,
+        timeLeft: gameState.dice.currentGame.timeLeft
+      });
+      
+      socket.emit('dice-game-state', {
+        gameId: gameState.dice.currentGame.id,
+        hashedSeed: gameState.dice.currentGame.hashedSeed,
+        phase: gameState.dice.currentGame.phase,
+        timeLeft: gameState.dice.currentGame.timeLeft,
+        result: gameState.dice.currentGame.result
+      });
+    } else {
+      console.log('🎲 No current game, will start one soon');
+    }
+
+    // Send list of current players
+    const currentPlayers = Array.from(gameState.dice.players.values());
+    if (currentPlayers.length > 0) {
+      socket.emit('dice-players-list', currentPlayers);
     }
   });
 
-  socket.on('place-dice-bet', (betData) => {
+  socket.on('place-dice-bet', async (betData) => {
+    console.log(`🎲 Bet received from ${betData.username}:`, betData);
+    console.log(`🎲 Current game state:`, {
+      exists: !!gameState.dice.currentGame,
+      phase: gameState.dice.currentGame?.phase,
+      timeLeft: gameState.dice.currentGame?.timeLeft
+    });
+
+    // Validate current game state
     if (!gameState.dice.currentGame || gameState.dice.currentGame.phase !== 'betting') {
-      socket.emit('bet-error', 'Betting is closed');
+      console.log(`🎲 Bet rejected - invalid game state`);
+      socket.emit('bet-error', 'Betting is not currently open');
       return;
     }
 
-    gameState.dice.players.set(socket.id, {
+    // Check if user already has a bet
+    if (gameState.dice.players.has(socket.id)) {
+      console.log(`🎲 Bet rejected - user already placed bet`);
+      socket.emit('bet-error', 'You have already placed a bet for this round');
+      return;
+    }
+
+    // Create bet data
+    const playerBet = {
       userId: betData.userId,
       username: betData.username,
       amount: betData.amount,
-      choice: betData.choice, // 'odd' or 'even'
-      socketId: socket.id
-    });
+      choice: betData.choice,
+      socketId: socket.id,
+      profilePicture: betData.profilePicture || socket.userData?.profilePicture || '/default-avatar.png',
+      timestamp: new Date()
+    };
 
-    io.to('dice-room').emit('player-joined', {
-      playerId: socket.id,
-      username: betData.username,
+    // Store the bet
+    gameState.dice.players.set(socket.id, playerBet);
+
+    // Save bet to database
+    await safeDiceDatabase('placeBet', {
+      id: `bet_${Date.now()}_${socket.id}`,
+      gameId: gameState.dice.currentGame.id,
+      userId: betData.userId,
       amount: betData.amount,
       choice: betData.choice
     });
+
+    console.log(`✅ Bet placed successfully for ${betData.username}: ${betData.amount} USDC on ${betData.choice}`);
+
+    // Notify all players about the new bet
+    io.to('dice-room').emit('player-joined', {
+      playerId: socket.id,
+      userId: betData.userId,
+      username: betData.username,
+      amount: betData.amount,
+      choice: betData.choice,
+      profilePicture: playerBet.profilePicture
+    });
+
+    // Send confirmation to the player
+    socket.emit('bet-placed-confirmation', {
+      success: true,
+      bet: playerBet,
+      message: `Bet placed: ${betData.amount} USDC on ${betData.choice.toUpperCase()}`
+    });
   });
 
-  // RPS Game Events
+  // RPS Game Events (keeping existing functionality)
   socket.on('join-rps', (userData) => {
     console.log('User joined RPS room:', userData.username, 'Socket ID:', socket.id);
     socket.join('rps-room');
     socket.userData = userData;
     
-    // Send current lobbies to the user
     const currentLobbies = Array.from(gameState.rps.lobbies.values())
       .filter(lobby => lobby.status === 'waiting')
       .slice(0, 20);
       
     socket.emit('rps-lobbies-list', currentLobbies);
-    
-    // Send battle history
     socket.emit('battle-history-updated', gameState.rps.history);
     
     console.log(`✅ Sent ${currentLobbies.length} lobbies to ${userData.username}`);
@@ -540,7 +694,6 @@ io.on('connection', (socket) => {
       hashedSeed: hashedSeed
     };
 
-    // Save lobby to database
     await safeRPSDatabase('createLobby', {
       id: lobbyId,
       creatorId: lobbyData.userId,
@@ -567,7 +720,6 @@ io.on('connection', (socket) => {
       });
     }
 
-    // Broadcast to all users in RPS room
     io.to('rps-room').emit('lobby-created', newLobby);
     console.log('✅ Lobby broadcasted to all users:', newLobby.id);
 
@@ -606,10 +758,7 @@ io.on('connection', (socket) => {
 
     socket.join(`rps-lobby-${joinData.lobbyId}`);
     
-    // Notify lobby participants
     io.to(`rps-lobby-${joinData.lobbyId}`).emit('lobby-ready', lobby);
-    
-    // Update all users about lobby status change
     io.to('rps-room').emit('lobby-updated', lobby);
     
     console.log('Lobby joined successfully:', joinData.lobbyId);
@@ -620,11 +769,9 @@ io.on('connection', (socket) => {
     console.log('Socket lobbyId:', socket.lobbyId);
     console.log('Available lobbies:', Array.from(gameState.rps.lobbies.keys()));
     
-    // Try to find lobby by socket ID first
     let lobbyId = socket.lobbyId;
     let lobby = gameState.rps.lobbies.get(lobbyId);
     
-    // If not found, try to find lobby where this user is the creator
     if (!lobby) {
       console.log('Lobby not found by socket.lobbyId, searching by creator...');
       for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
@@ -646,7 +793,6 @@ io.on('connection', (socket) => {
 
     console.log('Found lobby for bot battle:', lobby.id);
 
-    // Add bot as opponent
     lobby.opponent = {
       socketId: 'bot',
       userId: 'bot',
@@ -656,10 +802,7 @@ io.on('connection', (socket) => {
     };
     lobby.status = 'vs-bot';
 
-    // Notify the lobby creator
     io.to(`rps-lobby-${lobbyId}`).emit('bot-joined', lobby);
-    
-    // Update all users about lobby status change
     io.to('rps-room').emit('lobby-updated', lobby);
     
     console.log('✅ Bot joined lobby:', lobbyId);
@@ -669,16 +812,13 @@ io.on('connection', (socket) => {
     console.log('Move submitted:', moveData);
     console.log('Socket lobbyId:', socket.lobbyId);
     
-    // Try to find lobby
     let lobby = gameState.rps.lobbies.get(moveData.lobbyId);
     
-    // If not found by provided ID, try to find by socket
     if (!lobby && socket.lobbyId) {
       lobby = gameState.rps.lobbies.get(socket.lobbyId);
       moveData.lobbyId = socket.lobbyId;
     }
     
-    // Still not found? Search by user
     if (!lobby) {
       for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
         if (lobbyData.creator.socketId === socket.id || 
@@ -710,7 +850,6 @@ io.on('connection', (socket) => {
       const betAmount = lobby.creator.amount;
       const totalPot = betAmount * 2;
       
-      // Calculate payout and update user balance
       if (result.winner === 'player1') {
         winnerId = lobby.creator.userId;
         payout = totalPot * 0.95;
@@ -750,27 +889,21 @@ io.on('connection', (socket) => {
         createdAt: new Date()
       };
 
-      // Add to history
       gameState.rps.history.unshift(battleResult);
       if (gameState.rps.history.length > 50) {
         gameState.rps.history = gameState.rps.history.slice(0, 50);
       }
 
-      // Send result to lobby participants
       io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
-      
-      // Update all users with new battle history
       io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
       
-      // Clean up lobby
       gameState.rps.lobbies.delete(moveData.lobbyId);
       io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
       
       console.log('Bot battle completed:', battleResult.id, 'Winner:', winnerId);
     }
-    // Handle PvP game (player vs player)
+    // Handle PvP game (player vs player) - keeping existing logic...
     else if (lobby.status === 'ready') {
-      // Store the move and wait for both players
       if (!gameState.rps.activeBattles.has(moveData.lobbyId)) {
         gameState.rps.activeBattles.set(moveData.lobbyId, {
           lobby: lobby,
@@ -782,33 +915,28 @@ io.on('connection', (socket) => {
 
       const battle = gameState.rps.activeBattles.get(moveData.lobbyId);
       
-      // Only store move if not already submitted by this user
       if (!battle.moves[socket.userData.userId]) {
         battle.moves[socket.userData.userId] = moveData.move;
         battle.submittedCount++;
         
         console.log(`Move submitted by ${socket.userData.username}: ${moveData.move} (${battle.submittedCount}/2)`);
         
-        // Notify the player that their move was submitted
         socket.emit('move-submitted', { 
           message: 'Move submitted! Waiting for opponent...',
           movesSubmitted: battle.submittedCount,
           totalPlayers: 2
         });
         
-        // Notify both players about move count (without revealing moves)
         io.to(`rps-lobby-${moveData.lobbyId}`).emit('moves-update', {
           movesSubmitted: battle.submittedCount,
           totalPlayers: 2,
           waiting: battle.submittedCount < 2
         });
       } else {
-        // User already submitted a move
         socket.emit('move-error', 'You have already submitted your move');
         return;
       }
 
-      // If both moves are submitted, determine winner
       if (battle.submittedCount === 2 && Object.keys(battle.moves).length === 2) {
         console.log('Both moves submitted, determining winner...');
         
@@ -823,7 +951,6 @@ io.on('connection', (socket) => {
         let payout = 0;
         const totalPot = lobby.creator.amount + lobby.opponent.amount;
         
-        // Calculate payout and update user balances
         if (result.winner === 'player1') {
           winnerId = lobby.creator.userId;
           payout = totalPot * 0.95;
@@ -868,10 +995,8 @@ io.on('connection', (socket) => {
           createdAt: new Date()
         };
 
-        // Update lobby status to completed
         await safeRPSDatabase('updateLobbyStatus', moveData.lobbyId, 'completed');
 
-        // Save battle to database
         await safeRPSDatabase('createBattle', {
           id: battleResult.id,
           lobbyId: moveData.lobbyId,
@@ -884,7 +1009,6 @@ io.on('connection', (socket) => {
           isVsBot: false
         });
 
-        // Complete the battle with moves and results
         await safeRPSDatabase('completeBattle', battleResult.id, {
           player1Move: move1,
           player2Move: move2,
@@ -892,7 +1016,6 @@ io.on('connection', (socket) => {
           payout: payout
         });
 
-        // Add to both players' personal history
         let player1Result = 'lose';
         let player2Result = 'lose';
         if (winnerId === 'draw') {
@@ -906,7 +1029,6 @@ io.on('connection', (socket) => {
           player2Result = 'win';
         }
 
-        // Player 1 history
         await safeRPSDatabase('addUserHistory', {
           id: battleResult.id + '_p1',
           userId: lobby.creator.userId,
@@ -920,7 +1042,6 @@ io.on('connection', (socket) => {
           isVsBot: false
         });
 
-        // Player 2 history
         await safeRPSDatabase('addUserHistory', {
           id: battleResult.id + '_p2',
           userId: lobby.opponent.userId,
@@ -934,7 +1055,6 @@ io.on('connection', (socket) => {
           isVsBot: false
         });
 
-        // Add to recent battles (public)
         await safeRPSDatabase('addRecentBattle', {
           id: battleResult.id,
           player1Id: lobby.creator.userId,
@@ -952,16 +1072,13 @@ io.on('connection', (socket) => {
           isVsBot: false
         });
 
-        // Add to memory history for immediate updates
         gameState.rps.history.unshift(battleResult);
         if (gameState.rps.history.length > 50) {
           gameState.rps.history = gameState.rps.history.slice(0, 50);
         }
 
-        // Send result to both players in the lobby
         io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
         
-        // Send fresh battle history from database to all users
         const freshHistory = await safeRPSDatabase('getBattleHistory', 10);
         if (freshHistory && Array.isArray(freshHistory)) {
           const formattedHistory = freshHistory.map(battle => ({
@@ -992,11 +1109,9 @@ io.on('connection', (socket) => {
           }));
           io.to('rps-room').emit('battle-history-updated', formattedHistory);
         } else {
-          // Fallback to memory history
           io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
         }
         
-        // Clean up
         gameState.rps.activeBattles.delete(moveData.lobbyId);
         gameState.rps.lobbies.delete(moveData.lobbyId);
         io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
@@ -1012,11 +1127,9 @@ io.on('connection', (socket) => {
   socket.on('join-chat', async (userData) => {
     socket.join('chat-room');
     
-    // Look up user's profile picture from database
     const userProfilePicture = await getUserProfilePicture(userData.userId);
     const defaultAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${userData.userId || userData.username}&backgroundColor=1a202c&primaryColor=fa8072`;
     
-    // Store complete user data on socket
     socket.userData = {
       ...userData,
       profilePicture: userProfilePicture || userData.profilePicture || userData.profile_picture || defaultAvatar
@@ -1024,7 +1137,6 @@ io.on('connection', (socket) => {
     
     console.log(`👤 User joined chat: ${userData.username} with profile: ${socket.userData.profilePicture}`);
     
-    // Send recent chat history with corrected profile pictures
     const correctedHistory = await Promise.all(
       gameState.chat.messages.slice(-50).map(async (msg) => {
         if (!msg.profilePicture || msg.profilePicture === '/default-avatar.png') {
@@ -1040,17 +1152,13 @@ io.on('connection', (socket) => {
     
     socket.emit('chat-history', correctedHistory);
     
-    // Update online users count
     const onlineCount = io.sockets.adapter.rooms.get('chat-room')?.size || 0;
     io.to('chat-room').emit('online-users-count', onlineCount);
   });
 
   socket.on('send-message', async (messageData) => {
     try {
-      // Look up user's profile picture from database
       const userProfilePicture = await getUserProfilePicture(messageData.userId);
-      
-      // Generate default avatar if no profile picture found
       const defaultAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${messageData.userId || messageData.username}&backgroundColor=1a202c&primaryColor=fa8072`;
       
       const message = {
@@ -1073,7 +1181,6 @@ io.on('connection', (socket) => {
       io.to('chat-room').emit('new-message', message);
     } catch (error) {
       console.error('Error sending message:', error);
-      // Fallback to original logic if database lookup fails
       const defaultAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${messageData.userId || messageData.username}&backgroundColor=1a202c&primaryColor=fa8072`;
       
       const message = {
@@ -1104,7 +1211,17 @@ io.on('connection', (socket) => {
     console.log('User disconnected:', socket.id);
     
     // Clean up dice game
-    gameState.dice.players.delete(socket.id);
+    if (gameState.dice.players.has(socket.id)) {
+      const player = gameState.dice.players.get(socket.id);
+      gameState.dice.players.delete(socket.id);
+      console.log(`🎲 Removed player ${player?.username} from dice game`);
+      
+      // Notify other players
+      io.to('dice-room').emit('player-left', {
+        playerId: socket.id,
+        username: player?.username
+      });
+    }
     
     // Clean up RPS lobbies
     if (socket.lobbyId) {
@@ -1125,14 +1242,18 @@ io.on('connection', (socket) => {
   });
 });
 
-// Dice game loop - runs every 30 seconds
+// IMPROVED Dice game loop - runs every 30 seconds
 function startDiceGameLoop() {
-  setInterval(() => {
-    startNewDiceGame();
-  }, 30000); // 30 seconds
-
+  console.log('🎲 Starting dice game loop...');
+  
   // Start first game immediately
   startNewDiceGame();
+  
+  // Set interval for subsequent games
+  setInterval(() => {
+    console.log('🎲 Starting new dice game from interval...');
+    startNewDiceGame();
+  }, 30000); // 30 seconds
 }
 
 function startNewDiceGame() {
@@ -1140,6 +1261,12 @@ function startNewDiceGame() {
   const serverSeed = generateServerSeed();
   const hashedSeed = generateHash(serverSeed);
 
+  console.log(`🎲 Creating new dice game: ${gameId}`);
+
+  // Clear previous game players
+  gameState.dice.players.clear();
+
+  // Create new game state
   gameState.dice.currentGame = {
     id: gameId,
     serverSeed,
@@ -1147,11 +1274,21 @@ function startNewDiceGame() {
     phase: 'betting',
     timeLeft: 25,
     result: null,
-    players: new Map()
+    createdAt: new Date(),
+    nonce: gameState.dice.gameCounter
   };
 
-  gameState.dice.players.clear();
+  // Save game to database
+  safeDiceDatabase('createGame', {
+    id: gameId,
+    serverSeed,
+    hashedSeed,
+    nonce: gameState.dice.gameCounter
+  });
 
+  console.log(`🎲 Broadcasting new game to dice room: ${gameId}`);
+  
+  // Broadcast new game to all connected dice players
   io.to('dice-room').emit('new-dice-game', {
     gameId,
     hashedSeed,
@@ -1159,72 +1296,200 @@ function startNewDiceGame() {
     timeLeft: 25
   });
 
+  // Also send dice-game-state for consistency
+  io.to('dice-room').emit('dice-game-state', {
+    gameId,
+    hashedSeed,
+    phase: 'betting',
+    timeLeft: 25
+  });
+
+  console.log(`🎲 Game ${gameId} started - betting phase (25 seconds)`);
+
   // Betting phase countdown
   const bettingInterval = setInterval(() => {
     gameState.dice.currentGame.timeLeft--;
+    
+    // Broadcast timer update
     io.to('dice-room').emit('dice-timer-update', gameState.dice.currentGame.timeLeft);
+    
+    // Also broadcast complete game state periodically
+    if (gameState.dice.currentGame.timeLeft % 5 === 0) {
+      io.to('dice-room').emit('dice-game-state', {
+        gameId: gameState.dice.currentGame.id,
+        hashedSeed: gameState.dice.currentGame.hashedSeed,
+        phase: gameState.dice.currentGame.phase,
+        timeLeft: gameState.dice.currentGame.timeLeft
+      });
+    }
+
+    console.log(`🎲 Game ${gameId} - betting phase: ${gameState.dice.currentGame.timeLeft}s remaining`);
 
     if (gameState.dice.currentGame.timeLeft <= 0) {
       clearInterval(bettingInterval);
+      console.log(`🎲 Game ${gameId} - betting phase ended, starting rolling phase`);
       startDiceRolling();
     }
   }, 1000);
 }
 
 function startDiceRolling() {
+  if (!gameState.dice.currentGame) {
+    console.error('🎲 No current game to start rolling');
+    return;
+  }
+
+  console.log(`🎲 Game ${gameState.dice.currentGame.id} - entering rolling phase`);
+  
   gameState.dice.currentGame.phase = 'rolling';
   gameState.dice.currentGame.timeLeft = 5;
 
+  // Broadcast rolling start
   io.to('dice-room').emit('dice-rolling-start');
+  io.to('dice-room').emit('dice-game-state', {
+    gameId: gameState.dice.currentGame.id,
+    hashedSeed: gameState.dice.currentGame.hashedSeed,
+    phase: 'rolling',
+    timeLeft: 5
+  });
 
-  // Rolling phase
-  setTimeout(() => {
-    const result = generateProvablyFairDiceResult(
-      gameState.dice.currentGame.serverSeed,
-      gameState.dice.currentGame.id
-    );
-
-    gameState.dice.currentGame.result = result;
-    gameState.dice.currentGame.phase = 'complete';
-
-    // Calculate winners and payouts
-    const winners = [];
-    const losers = [];
-
-    gameState.dice.players.forEach((player, socketId) => {
-      const isWinner = (result.isOdd && player.choice === 'odd') || 
-                      (!result.isOdd && player.choice === 'even');
-      
-      if (isWinner) {
-        const payout = player.amount * 1.96; // 2% house edge
-        winners.push({
-          ...player,
-          payout
-        });
-      } else {
-        losers.push(player);
-      }
-    });
-
-    const gameResult = {
-      gameId: gameState.dice.currentGame.id,
-      diceValue: result.value,
-      isOdd: result.isOdd,
-      serverSeed: gameState.dice.currentGame.serverSeed,
-      hashedSeed: gameState.dice.currentGame.hashedSeed,
-      winners,
-      losers,
-      timestamp: new Date()
-    };
-
-    gameState.dice.history.unshift(gameResult);
-    if (gameState.dice.history.length > 20) {
-      gameState.dice.history = gameState.dice.history.slice(0, 20);
+  // Rolling phase countdown
+  const rollingInterval = setInterval(() => {
+    gameState.dice.currentGame.timeLeft--;
+    io.to('dice-room').emit('dice-timer-update', gameState.dice.currentGame.timeLeft);
+    
+    if (gameState.dice.currentGame.timeLeft <= 0) {
+      clearInterval(rollingInterval);
+      completeDiceGame();
     }
+  }, 1000);
+}
 
-    io.to('dice-room').emit('dice-result', gameResult);
-    io.to('admin-room').emit('dice-game-complete', gameResult);
+async function completeDiceGame() {
+  if (!gameState.dice.currentGame) {
+    console.error('🎲 No current game to complete');
+    return;
+  }
 
+  console.log(`🎲 Game ${gameState.dice.currentGame.id} - completing game`);
+
+  // Generate provably fair result
+  const diceResult = generateProvablyFairDiceResult(
+    gameState.dice.currentGame.serverSeed,
+    gameState.dice.currentGame.nonce
+  );
+
+  gameState.dice.currentGame.result = diceResult;
+  gameState.dice.currentGame.phase = 'complete';
+
+  console.log(`🎲 Game ${gameState.dice.currentGame.id} - dice result: ${diceResult.value} (${diceResult.isOdd ? 'ODD' : 'EVEN'})`);
+
+  // Process all bets and calculate winners/losers
+  const winners = [];
+  const losers = [];
+  let totalWagered = 0;
+  let totalPayout = 0;
+
+  for (const [socketId, player] of gameState.dice.players.entries()) {
+    totalWagered += player.amount;
+    
+    const isWinner = (diceResult.isOdd && player.choice === 'odd') || 
+                    (!diceResult.isOdd && player.choice === 'even');
+    
+    if (isWinner) {
+      const payout = player.amount * 1.96; // 2% house edge
+      totalPayout += payout;
+      
+      winners.push({
+        ...player,
+        payout
+      });
+      
+      // Update winner's balance and stats
+      await safeUpdateUserBalance(player.userId, payout, 'add');
+      await safeUpdateUserStats(player.userId, player.amount, payout);
+      
+      console.log(`🏆 Winner: ${player.username} won ${payout} USDC (bet: ${player.amount} on ${player.choice})`);
+    } else {
+      losers.push(player);
+      
+      // Update loser's stats (balance already deducted when bet was placed)
+      await safeUpdateUserStats(player.userId, player.amount, 0);
+      
+      console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (bet on ${player.choice})`);
+    }
+  }
+
+  // Create game result
+  const gameResult = {
+    gameId: gameState.dice.currentGame.id,
+    diceValue: diceResult.value,
+    isOdd: diceResult.isOdd,
+    serverSeed: gameState.dice.currentGame.serverSeed,
+    hashedSeed: gameState.dice.currentGame.hashedSeed,
+    winners,
+    losers,
+    totalWagered,
+    totalPayout,
+    playersCount: gameState.dice.players.size,
+    timestamp: new Date()
+  };
+
+  // Save completed game to database
+  await safeDiceDatabase('completeGame', gameState.dice.currentGame.id, {
+    diceValue: diceResult.value,
+    isOdd: diceResult.isOdd,
+    totalWagered,
+    totalPayout,
+    playersCount: gameState.dice.players.size
+  });
+
+  // Update bet results in database
+  for (const [socketId, player] of gameState.dice.players.entries()) {
+    const isWinner = winners.some(w => w.userId === player.userId);
+    const payout = isWinner ? winners.find(w => w.userId === player.userId)?.payout || 0 : 0;
+    
+    await safeDiceDatabase('updateBetResult', 
+      `bet_${gameState.dice.currentGame.createdAt.getTime()}_${socketId}`,
+      isWinner,
+      payout
+    );
+  }
+
+  // Add to history
+  gameState.dice.history.unshift(gameResult);
+  if (gameState.dice.history.length > 20) {
+    gameState.dice.history = gameState.dice.history.slice(0, 20);
+  }
+
+  console.log(`🎲 Game ${gameState.dice.currentGame.id} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
+
+  // Broadcast result to all players
+  io.to('dice-room').emit('dice-result', gameResult);
+  
+  // Update game state
+  io.to('dice-room').emit('dice-game-state', {
+    gameId: gameState.dice.currentGame.id,
+    hashedSeed: gameState.dice.currentGame.hashedSeed,
+    phase: 'complete',
+    timeLeft: 0,
+    result: {
+      diceValue: diceResult.value,
+      isOdd: diceResult.isOdd,
+      serverSeed: gameState.dice.currentGame.serverSeed,
+      winners,
+      losers
+    }
+  });
+
+  // Notify admin
+  io.to('admin-room').emit('dice-game-complete', gameResult);
+
+  console.log(`🎲 Game ${gameState.dice.currentGame.id} - all results broadcast, waiting 5 seconds before next game`);
+
+  // Wait 5 seconds before starting next game
+  setTimeout(() => {
+    console.log(`🎲 Game ${gameState.dice.currentGame.id} - cleanup complete, ready for next game`);
   }, 5000);
 }
 
@@ -1232,7 +1497,7 @@ function startDiceRolling() {
 httpServer.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Socket.IO server running on port ${port}`);
   console.log(`🌐 CORS enabled for Vercel domains`);
-  console.log(`💾 Database connection: ${UserDatabase ? 'Connected' : 'Mock mode'}`);
+  console.log(`💾 Database connection: ${UserDatabase && DiceDatabase ? 'Connected' : 'Mock mode'}`);
   
   // Start dice game loop
   startDiceGameLoop();
