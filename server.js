@@ -734,6 +734,11 @@ io.on('connection', (socket) => {
       }
     }
 
+    // FIXED: Generate shorter bet ID FIRST (max 36 chars for database)
+    const crypto = require('crypto');
+    const betId = crypto.randomUUID(); // Standard UUID format (36 chars)
+    console.log(`🎲 Attempting to save bet to database: ${betId}`);
+
     // Create bet data with stored bet ID
     const playerBet = {
       userId: betData.userId,
@@ -746,11 +751,6 @@ io.on('connection', (socket) => {
       gameId: gameState.dice.currentGame.id,
       betId: betId // Store the bet ID for later reference
     };
-
-    // FIXED: Generate shorter bet ID (max 36 chars for database)
-    const crypto = require('crypto');
-    const betId = crypto.randomUUID(); // Standard UUID format (36 chars)
-    console.log(`🎲 Attempting to save bet to database: ${betId}`);
     
     const dbSuccess = await safeDiceDatabase('placeBet', {
       id: betId,
