@@ -1,4 +1,4 @@
-// Complete Socket.IO server for Railway deployment - FULL VERSION
+// Complete Socket.IO server for Railway deployment - FIXED VERSION
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -83,12 +83,20 @@ try {
     }
   };
 
-  // Dice Database functions
+  // FIXED: Dice Database functions with proper constraint handling
   DiceDatabase = {
     createGame: async (gameData) => {
       let connection;
       try {
         connection = await pool.getConnection();
+        
+        // Check if game already exists first
+        const [existing] = await connection.execute('SELECT id FROM dice_games WHERE id = ?', [gameData.id]);
+        if (existing.length > 0) {
+          console.log(`🎲 Database: Game ${gameData.id} already exists`);
+          return true;
+        }
+        
         await connection.execute(
           `INSERT INTO dice_games (id, server_seed, hashed_seed, public_seed, nonce, status)
            VALUES (?, ?, ?, ?, ?, 'betting')`,
@@ -128,13 +136,27 @@ try {
       try {
         connection = await pool.getConnection();
         
-        // First check if bet already exists
-        const [existing] = await connection.execute(
+        // FIXED: Check if game exists in dice_games table
+        const [gameExists] = await connection.execute('SELECT id FROM dice_games WHERE id = ? AND status = ?', [betData.gameId, 'betting']);
+        if (gameExists.length === 0) {
+          console.error(`❌ Database: Game ${betData.gameId} does not exist or not in betting phase`);
+          return false;
+        }
+        
+        // FIXED: Check if user exists in users table
+        const [userExists] = await connection.execute('SELECT id FROM users WHERE id = ?', [betData.userId]);
+        if (userExists.length === 0) {
+          console.error(`❌ Database: User ${betData.userId} does not exist`);
+          return false;
+        }
+        
+        // Check if bet already exists
+        const [betExists] = await connection.execute(
           'SELECT id FROM dice_bets WHERE game_id = ? AND user_id = ?',
           [betData.gameId, betData.userId]
         );
         
-        if (existing.length > 0) {
+        if (betExists.length > 0) {
           console.log(`⚠️ Database: Bet already exists for user ${betData.userId} in game ${betData.gameId}`);
           return false;
         }
@@ -149,7 +171,12 @@ try {
         return true;
       } catch (error) {
         console.error('❌ Database placeBet error:', error);
-        console.error('❌ Bet data:', betData);
+        console.error('❌ Error details:', {
+          code: error.code,
+          errno: error.errno,
+          sqlMessage: error.sqlMessage,
+          betData: betData
+        });
         return false;
       } finally {
         if (connection) connection.release();
@@ -719,7 +746,7 @@ io.on('connection', (socket) => {
       gameId: gameState.dice.currentGame.id
     };
 
-    // Save bet to database FIRST before adding to memory
+    // FIXED: Save bet to database FIRST with proper constraint checks
     const betId = `bet_${gameState.dice.currentGame.id}_${betData.userId}`;
     console.log(`🎲 Attempting to save bet to database: ${betId}`);
     
@@ -733,7 +760,7 @@ io.on('connection', (socket) => {
 
     if (!dbSuccess) {
       console.log(`🎲 Bet rejected - database save failed`);
-      socket.emit('bet-error', 'Failed to save bet to database');
+      socket.emit('bet-error', 'Failed to save bet to database - try again');
       return;
     }
 
@@ -1394,16 +1421,27 @@ async function startNewDiceGame() {
     nonce: gameState.dice.gameCounter
   };
 
-  // Save game to database FIRST
-  const dbSuccess = await safeDiceDatabase('createGame', {
-    id: gameId,
-    serverSeed,
-    hashedSeed,
-    nonce: gameState.dice.gameCounter
-  });
+  // FIXED: Save game to database FIRST with retries
+  let retryCount = 0;
+  let dbSuccess = false;
+  
+  while (!dbSuccess && retryCount < 3) {
+    dbSuccess = await safeDiceDatabase('createGame', {
+      id: gameId,
+      serverSeed,
+      hashedSeed,
+      nonce: gameState.dice.gameCounter
+    });
+    
+    if (!dbSuccess) {
+      retryCount++;
+      console.log(`⚠️ Game creation failed, retry ${retryCount}/3`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
 
   if (!dbSuccess) {
-    console.error('❌ Failed to save game to database, retrying...');
+    console.error('❌ Failed to save game to database after 3 retries, retrying entire function...');
     setTimeout(() => startNewDiceGame(), 5000);
     return;
   }
