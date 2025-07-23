@@ -1,4 +1,4 @@
-// Complete Socket.IO server for Railway deployment - ROBUST VERSION
+// Complete Socket.IO server for Railway deployment - FULL VERSION
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -34,29 +34,35 @@ try {
     password: process.env.DB_PASSWORD || 'giqaKuZnR72ZdQL=m.DVdtUB',
     database: process.env.DB_NAME || 's175260_casino-n1verse',
     waitForConnections: true,
+    acquireTimeout: 60000,
+    timeout: 60000,
+    reconnect: true
   });
 
   // User Database functions
   UserDatabase = {
     updateUserBalance: async (userId, amount, operation) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         const operator = operation === 'add' ? '+' : '-';
         await connection.execute(
           `UPDATE users SET balance = balance ${operator} ?, last_active = CURRENT_TIMESTAMP WHERE id = ?`,
           [Math.abs(amount), userId]
         );
-        connection.release();
         console.log(`💰 Database: ${operation} ${amount} for user ${userId}`);
         return true;
       } catch (error) {
         console.error('❌ Database updateUserBalance error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     updateUserStats: async (userId, wagered, won) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `UPDATE users SET 
            total_wagered = total_wagered + ?,
@@ -66,12 +72,13 @@ try {
            WHERE id = ?`,
           [wagered, won, userId]
         );
-        connection.release();
         console.log(`📊 Database: stats updated for user ${userId} - wagered: ${wagered}, won: ${won}`);
         return true;
       } catch (error) {
         console.error('❌ Database updateUserStats error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     }
   };
@@ -79,24 +86,27 @@ try {
   // Dice Database functions
   DiceDatabase = {
     createGame: async (gameData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `INSERT INTO dice_games (id, server_seed, hashed_seed, public_seed, nonce, status)
            VALUES (?, ?, ?, ?, ?, 'betting')`,
           [gameData.id, gameData.serverSeed, gameData.hashedSeed, gameData.publicSeed || null, gameData.nonce]
         );
-        connection.release();
         console.log(`🎲 Database: Game created ${gameData.id}`);
         return true;
       } catch (error) {
         console.error('❌ Database createGame error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     completeGame: async (gameId, result) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `UPDATE dice_games SET 
            dice_value = ?, is_odd = ?, total_wagered = ?, total_payout = ?, 
@@ -104,17 +114,19 @@ try {
            WHERE id = ?`,
           [result.diceValue, result.isOdd, result.totalWagered, result.totalPayout, result.playersCount, gameId]
         );
-        connection.release();
         console.log(`🎲 Database: Game completed ${gameId}`);
         return true;
       } catch (error) {
         console.error('❌ Database completeGame error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     placeBet: async (betData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         
         // First check if bet already exists
         const [existing] = await connection.execute(
@@ -123,62 +135,69 @@ try {
         );
         
         if (existing.length > 0) {
-          connection.release();
           console.log(`⚠️ Database: Bet already exists for user ${betData.userId} in game ${betData.gameId}`);
           return false;
         }
         
+        // Insert new bet
         await connection.execute(
           `INSERT INTO dice_bets (id, game_id, user_id, amount, choice, created_at)
            VALUES (?, ?, ?, ?, ?, NOW())`,
           [betData.id, betData.gameId, betData.userId, betData.amount, betData.choice]
         );
-        connection.release();
         console.log(`🎲 Database: Bet placed ${betData.id}`);
         return true;
       } catch (error) {
         console.error('❌ Database placeBet error:', error);
+        console.error('❌ Bet data:', betData);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     updateBetResult: async (betId, isWinner, payout) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           'UPDATE dice_bets SET is_winner = ?, payout = ? WHERE id = ?',
           [isWinner, payout, betId]
         );
-        connection.release();
         console.log(`🎲 Database: Bet result updated ${betId} - Winner: ${isWinner}, Payout: ${payout}`);
         return true;
       } catch (error) {
         console.error('❌ Database updateBetResult error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     }
   };
 
-  // RPS Database functions (keeping existing)
+  // RPS Database functions
   RPSDatabase = {
     createLobby: async (lobbyData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `INSERT INTO rps_lobbies (id, creator_id, amount, hashed_seed, timeout_at)
            VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 30 SECOND))`,
           [lobbyData.id, lobbyData.creatorId, lobbyData.amount, lobbyData.hashedSeed]
         );
-        connection.release();
         console.log(`🏆 Database: Lobby created ${lobbyData.id}`);
         return true;
       } catch (error) {
         console.error('❌ Database createLobby error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     updateLobbyStatus: async (lobbyId, status, opponentId) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         if (opponentId) {
           await connection.execute(
             `UPDATE rps_lobbies SET status = ?, opponent_id = ? WHERE id = ?`,
@@ -190,68 +209,76 @@ try {
             [status, lobbyId]
           );
         }
-        connection.release();
         console.log(`🔄 Database: Lobby ${lobbyId} status updated to ${status}`);
         return true;
       } catch (error) {
         console.error('❌ Database updateLobbyStatus error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     createBattle: async (battleData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `INSERT INTO rps_battles (id, lobby_id, player1_id, player2_id, amount, server_seed, hashed_seed, nonce, is_vs_bot)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [battleData.id, battleData.lobbyId, battleData.player1Id, battleData.player2Id, battleData.amount, 
            battleData.serverSeed, battleData.hashedSeed, battleData.nonce, battleData.isVsBot]
         );
-        connection.release();
         console.log(`⚔️ Database: Battle created ${battleData.id}`);
         return true;
       } catch (error) {
         console.error('❌ Database createBattle error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     completeBattle: async (battleId, result) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `UPDATE rps_battles SET 
            player1_move = ?, player2_move = ?, winner_id = ?, payout = ?
            WHERE id = ?`,
           [result.player1Move, result.player2Move, result.winnerId, result.payout, battleId]
         );
-        connection.release();
         console.log(`🏁 Database: Battle completed ${battleId}`);
         return true;
       } catch (error) {
         console.error('❌ Database completeBattle error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     addUserHistory: async (historyData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `INSERT INTO rps_user_history (id, user_id, opponent_id, opponent_username, user_move, opponent_move, result, amount, payout, is_vs_bot)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [historyData.id, historyData.userId, historyData.opponentId, historyData.opponentUsername, 
            historyData.userMove, historyData.opponentMove, historyData.result, historyData.amount, historyData.payout, historyData.isVsBot]
         );
-        connection.release();
         console.log(`📜 Database: User history added for ${historyData.userId}`);
         return true;
       } catch (error) {
         console.error('❌ Database addUserHistory error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     addRecentBattle: async (battleData) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         await connection.execute(
           `INSERT INTO rps_recent_battles (id, player1_id, player1_username, player1_avatar, player1_move, 
            player2_id, player2_username, player2_avatar, player2_move, winner_id, winner_username, amount, payout, is_vs_bot)
@@ -269,17 +296,19 @@ try {
             ) AS temp
           )`
         );
-        connection.release();
         console.log(`🌐 Database: Recent battle added ${battleData.id}`);
         return true;
       } catch (error) {
         console.error('❌ Database addRecentBattle error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
       }
     },
     getUserHistory: async (userId, limit = 20) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         const [rows] = await connection.execute(
           `SELECT * FROM rps_user_history 
            WHERE user_id = ? 
@@ -287,32 +316,36 @@ try {
            LIMIT ?`,
           [userId, limit]
         );
-        connection.release();
         return rows;
       } catch (error) {
         console.error('❌ Database getUserHistory error:', error);
         return [];
+      } finally {
+        if (connection) connection.release();
       }
     },
     getRecentBattles: async (limit = 10) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         const [rows] = await connection.execute(
           `SELECT * FROM rps_recent_battles 
            ORDER BY created_at DESC 
            LIMIT ?`,
           [limit]
         );
-        connection.release();
         return rows;
       } catch (error) {
         console.error('❌ Database getRecentBattles error:', error);
         return [];
+      } finally {
+        if (connection) connection.release();
       }
     },
     getBattleHistory: async (limit = 10) => {
+      let connection;
       try {
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
         const [rows] = await connection.execute(
           `SELECT rb.*, 
            u1.username as player1_username, u1.profile_picture as player1_avatar,
@@ -327,11 +360,12 @@ try {
            LIMIT ?`,
           [limit]
         );
-        connection.release();
         return rows;
       } catch (error) {
         console.error('❌ Database getBattleHistory error:', error);
         return [];
+      } finally {
+        if (connection) connection.release();
       }
     }
   };
@@ -350,15 +384,20 @@ try {
     }
   };
   DiceDatabase = {
-    createGame: async () => console.log('📝 Mock: createGame called'),
-    completeGame: async () => console.log('📝 Mock: completeGame called'),
-    placeBet: async () => console.log('📝 Mock: placeBet called'),
-    updateBetResult: async () => console.log('📝 Mock: updateBetResult called')
+    createGame: async () => { console.log('📝 Mock: createGame called'); return true; },
+    completeGame: async () => { console.log('📝 Mock: completeGame called'); return true; },
+    placeBet: async () => { console.log('📝 Mock: placeBet called'); return true; },
+    updateBetResult: async () => { console.log('📝 Mock: updateBetResult called'); return true; }
   };
   RPSDatabase = {
-    createLobby: async () => console.log('📝 Mock: createLobby called'),
-    createBattle: async () => console.log('📝 Mock: createBattle called'),
-    completeBattle: async () => console.log('📝 Mock: completeBattle called'),
+    createLobby: async () => { console.log('📝 Mock: createLobby called'); return true; },
+    updateLobbyStatus: async () => { console.log('📝 Mock: updateLobbyStatus called'); return true; },
+    createBattle: async () => { console.log('📝 Mock: createBattle called'); return true; },
+    completeBattle: async () => { console.log('📝 Mock: completeBattle called'); return true; },
+    addUserHistory: async () => { console.log('📝 Mock: addUserHistory called'); return true; },
+    addRecentBattle: async () => { console.log('📝 Mock: addRecentBattle called'); return true; },
+    getUserHistory: async () => [],
+    getRecentBattles: async () => [],
     getBattleHistory: async () => []
   };
 }
@@ -412,11 +451,11 @@ async function safeDiceDatabase(functionName, ...args) {
       return result;
     } else {
       console.log(`📝 Mock Dice Database ${functionName} called with args:`, args);
-      return null;
+      return true;
     }
   } catch (error) {
     console.error(`❌ Error in Dice Database ${functionName}:`, error);
-    return null;
+    return false;
   }
 }
 
@@ -436,7 +475,7 @@ async function safeRPSDatabase(functionName, ...args) {
   }
 }
 
-// Game state management - IMPROVED WITH BETTER CLEANUP
+// Game state management
 const gameState = {
   dice: {
     currentGame: null,
@@ -526,7 +565,7 @@ function determineRPSWinner(move1, move2) {
   return { winner: wins[move1] === move2 ? 'player1' : 'player2' };
 }
 
-// IMPROVED: Clear all timers and intervals
+// Clear all timers and intervals
 function clearGameTimers() {
   if (gameState.dice.bettingInterval) {
     clearInterval(gameState.dice.bettingInterval);
@@ -539,7 +578,7 @@ function clearGameTimers() {
   console.log('🧹 All game timers cleared');
 }
 
-// IMPROVED: Complete game cleanup
+// Complete game cleanup
 function cleanupGameState() {
   console.log('🧹 Starting complete game cleanup...');
   
@@ -604,7 +643,7 @@ io.on('connection', (socket) => {
     socket.userData = userData;
   });
 
-  // Dice Game Events - ROBUST VERSION
+  // Dice Game Events
   socket.on('join-dice', (userData) => {
     console.log(`🎲 User joining dice room: ${userData?.username} (${socket.id})`);
     socket.join('dice-room');
@@ -644,7 +683,7 @@ io.on('connection', (socket) => {
       timeLeft: gameState.dice.currentGame?.timeLeft
     });
 
-    // ROBUST: Validate current game state
+    // Validate current game state
     if (!gameState.dice.currentGame) {
       console.log(`🎲 Bet rejected - no current game`);
       socket.emit('bet-error', 'No active game found');
@@ -657,7 +696,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // ROBUST: Check if user already has a bet for this specific game
+    // Check if user already has a bet for this specific game
     let userAlreadyBet = false;
     for (const [socketId, player] of gameState.dice.players.entries()) {
       if (player.userId === betData.userId) {
@@ -680,8 +719,10 @@ io.on('connection', (socket) => {
       gameId: gameState.dice.currentGame.id
     };
 
-    // ROBUST: Save bet to database FIRST before adding to memory
+    // Save bet to database FIRST before adding to memory
     const betId = `bet_${gameState.dice.currentGame.id}_${betData.userId}`;
+    console.log(`🎲 Attempting to save bet to database: ${betId}`);
+    
     const dbSuccess = await safeDiceDatabase('placeBet', {
       id: betId,
       gameId: gameState.dice.currentGame.id,
@@ -723,7 +764,7 @@ io.on('connection', (socket) => {
     console.log(`🎲 Player count for game ${gameState.dice.currentGame.id}: ${gameState.dice.players.size}`);
   });
 
-  // RPS Game Events (keeping existing functionality)
+  // RPS Game Events - COMPLETE HANDLERS
   socket.on('join-rps', (userData) => {
     console.log('User joined RPS room:', userData.username, 'Socket ID:', socket.id);
     socket.join('rps-room');
@@ -739,7 +780,6 @@ io.on('connection', (socket) => {
     console.log(`✅ Sent ${currentLobbies.length} lobbies to ${userData.username}`);
   });
 
-  // Keep all existing RPS handlers...
   socket.on('create-rps-lobby', async (lobbyData) => {
     console.log('Creating RPS lobby:', lobbyData, 'Socket ID:', socket.id);
     
@@ -799,8 +839,395 @@ io.on('connection', (socket) => {
     }, 30000);
   });
 
-  // Keep all other RPS handlers exactly the same...
-  // (joinRpsLobby, playRpsBot, submitRpsMove, etc.)
+  socket.on('join-rps-lobby', (joinData) => {
+    console.log('User attempting to join lobby:', joinData);
+    
+    const lobby = gameState.rps.lobbies.get(joinData.lobbyId);
+    if (!lobby || lobby.status !== 'waiting') {
+      socket.emit('join-error', 'Lobby not available');
+      return;
+    }
+
+    if (lobby.creator.userId === joinData.userId) {
+      socket.emit('join-error', 'Cannot join your own lobby');
+      return;
+    }
+
+    lobby.opponent = {
+      socketId: socket.id,
+      userId: joinData.userId,
+      username: joinData.username,
+      amount: joinData.amount,
+      profilePicture: socket.userData?.profilePicture || '/default-avatar.png'
+    };
+    lobby.status = 'ready';
+
+    socket.join(`rps-lobby-${joinData.lobbyId}`);
+    
+    io.to(`rps-lobby-${joinData.lobbyId}`).emit('lobby-ready', lobby);
+    io.to('rps-room').emit('lobby-updated', lobby);
+    
+    console.log('Lobby joined successfully:', joinData.lobbyId);
+  });
+
+  socket.on('play-rps-bot', (botData) => {
+    console.log('User requesting bot battle:', botData);
+    console.log('Socket lobbyId:', socket.lobbyId);
+    console.log('Available lobbies:', Array.from(gameState.rps.lobbies.keys()));
+    
+    let lobbyId = socket.lobbyId;
+    let lobby = gameState.rps.lobbies.get(lobbyId);
+    
+    if (!lobby) {
+      console.log('Lobby not found by socket.lobbyId, searching by creator...');
+      for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
+        if (lobbyData.creator.socketId === socket.id || lobbyData.creator.userId === socket.userData?.userId) {
+          lobbyId = id;
+          lobby = lobbyData;
+          socket.lobbyId = id;
+          console.log('Found lobby by creator:', id);
+          break;
+        }
+      }
+    }
+    
+    if (!lobby) {
+      console.error('No lobby found for user:', socket.userData);
+      socket.emit('join-error', 'No active lobby found. Please create a new lobby.');
+      return;
+    }
+
+    console.log('Found lobby for bot battle:', lobby.id);
+
+    lobby.opponent = {
+      socketId: 'bot',
+      userId: 'bot',
+      username: 'Bot',
+      amount: botData.amount || lobby.creator.amount,
+      profilePicture: '/bot-avatar.png'
+    };
+    lobby.status = 'vs-bot';
+
+    io.to(`rps-lobby-${lobbyId}`).emit('bot-joined', lobby);
+    io.to('rps-room').emit('lobby-updated', lobby);
+    
+    console.log('✅ Bot joined lobby:', lobbyId);
+  });
+
+  socket.on('submit-rps-move', async (moveData) => {
+    console.log('Move submitted:', moveData);
+    console.log('Socket lobbyId:', socket.lobbyId);
+    
+    let lobby = gameState.rps.lobbies.get(moveData.lobbyId);
+    
+    if (!lobby && socket.lobbyId) {
+      lobby = gameState.rps.lobbies.get(socket.lobbyId);
+      moveData.lobbyId = socket.lobbyId;
+    }
+    
+    if (!lobby) {
+      for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
+        if (lobbyData.creator.socketId === socket.id || 
+            lobbyData.creator.userId === socket.userData?.userId ||
+            (lobbyData.opponent && lobbyData.opponent.socketId === socket.id)) {
+          lobby = lobbyData;
+          moveData.lobbyId = id;
+          console.log('Found lobby by user search:', id);
+          break;
+        }
+      }
+    }
+    
+    if (!lobby) {
+      console.error('No lobby found for move submission');
+      socket.emit('join-error', 'Battle session not found');
+      return;
+    }
+
+    console.log('Processing move for lobby:', lobby.id, 'Status:', lobby.status);
+
+    // Handle bot game
+    if (lobby.status === 'vs-bot') {
+      const botMove = generateProvablyFairRPSMove(lobby.hashedSeed, moveData.nonce);
+      const result = determineRPSWinner(moveData.move, botMove);
+      
+      let winnerId = null;
+      let payout = 0;
+      const betAmount = lobby.creator.amount;
+      const totalPot = betAmount * 2;
+      
+      if (result.winner === 'player1') {
+        winnerId = lobby.creator.userId;
+        payout = totalPot * 0.95;
+        
+        await safeUpdateUserBalance(lobby.creator.userId, payout, 'add');
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, payout);
+        console.log(`✅ User ${lobby.creator.username} won ${payout} USDC (bet: ${betAmount})`);
+      } else if (result.winner === 'draw') {
+        winnerId = 'draw';
+        payout = betAmount;
+        
+        await safeUpdateUserBalance(lobby.creator.userId, betAmount, 'add');
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, betAmount);
+        console.log(`✅ Draw: Refunded ${betAmount} USDC to ${lobby.creator.username}`);
+      } else {
+        winnerId = 'bot';
+        payout = 0;
+        
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, 0);
+        console.log(`✅ User ${lobby.creator.username} lost ${betAmount} USDC to bot`);
+      }
+
+      const battleResult = {
+        id: generateBattleId(),
+        player1: lobby.creator,
+        player2: lobby.opponent,
+        amount: lobby.creator.amount,
+        payout: payout,
+        moves: {
+          [lobby.creator.userId]: moveData.move,
+          'bot': botMove
+        },
+        winner: winnerId,
+        isVsBot: true,
+        serverSeed: lobby.hashedSeed,
+        hashedSeed: lobby.hashedSeed,
+        createdAt: new Date()
+      };
+
+      gameState.rps.history.unshift(battleResult);
+      if (gameState.rps.history.length > 50) {
+        gameState.rps.history = gameState.rps.history.slice(0, 50);
+      }
+
+      io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
+      io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
+      
+      gameState.rps.lobbies.delete(moveData.lobbyId);
+      io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
+      
+      console.log('Bot battle completed:', battleResult.id, 'Winner:', winnerId);
+    }
+    // Handle PvP game (player vs player)
+    else if (lobby.status === 'ready') {
+      if (!gameState.rps.activeBattles.has(moveData.lobbyId)) {
+        gameState.rps.activeBattles.set(moveData.lobbyId, {
+          lobby: lobby,
+          moves: {},
+          players: [lobby.creator.userId, lobby.opponent.userId],
+          submittedCount: 0
+        });
+      }
+
+      const battle = gameState.rps.activeBattles.get(moveData.lobbyId);
+      
+      if (!battle.moves[socket.userData.userId]) {
+        battle.moves[socket.userData.userId] = moveData.move;
+        battle.submittedCount++;
+        
+        console.log(`Move submitted by ${socket.userData.username}: ${moveData.move} (${battle.submittedCount}/2)`);
+        
+        socket.emit('move-submitted', { 
+          message: 'Move submitted! Waiting for opponent...',
+          movesSubmitted: battle.submittedCount,
+          totalPlayers: 2
+        });
+        
+        io.to(`rps-lobby-${moveData.lobbyId}`).emit('moves-update', {
+          movesSubmitted: battle.submittedCount,
+          totalPlayers: 2,
+          waiting: battle.submittedCount < 2
+        });
+      } else {
+        socket.emit('move-error', 'You have already submitted your move');
+        return;
+      }
+
+      if (battle.submittedCount === 2 && Object.keys(battle.moves).length === 2) {
+        console.log('Both moves submitted, determining winner...');
+        
+        const move1 = battle.moves[lobby.creator.userId];
+        const move2 = battle.moves[lobby.opponent.userId];
+        
+        console.log(`PvP Battle: ${lobby.creator.username} (${move1}) vs ${lobby.opponent.username} (${move2})`);
+        
+        const result = determineRPSWinner(move1, move2);
+        
+        let winnerId = null;
+        let payout = 0;
+        const totalPot = lobby.creator.amount + lobby.opponent.amount;
+        
+        if (result.winner === 'player1') {
+          winnerId = lobby.creator.userId;
+          payout = totalPot * 0.95;
+          
+          await safeUpdateUserBalance(lobby.creator.userId, payout, 'add');
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, payout);
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, 0);
+          console.log(`✅ PvP: ${lobby.creator.username} won ${payout} USDC`);
+        } else if (result.winner === 'player2') {
+          winnerId = lobby.opponent.userId;
+          payout = totalPot * 0.95;
+          
+          await safeUpdateUserBalance(lobby.opponent.userId, payout, 'add');
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, payout);
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, 0);
+          console.log(`✅ PvP: ${lobby.opponent.username} won ${payout} USDC`);
+        } else {
+          winnerId = 'draw';
+          payout = lobby.creator.amount;
+          
+          await safeUpdateUserBalance(lobby.creator.userId, lobby.creator.amount, 'add');
+          await safeUpdateUserBalance(lobby.opponent.userId, lobby.opponent.amount, 'add');
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, lobby.creator.amount);
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, lobby.opponent.amount);
+          console.log(`✅ PvP Draw: Both players refunded`);
+        }
+
+        const battleResult = {
+          id: generateBattleId(),
+          player1: lobby.creator,
+          player2: lobby.opponent,
+          amount: lobby.creator.amount,
+          payout: payout,
+          moves: {
+            [lobby.creator.userId]: move1,
+            [lobby.opponent.userId]: move2
+          },
+          winner: winnerId,
+          isVsBot: false,
+          serverSeed: lobby.hashedSeed,
+          hashedSeed: lobby.hashedSeed,
+          createdAt: new Date()
+        };
+
+        await safeRPSDatabase('updateLobbyStatus', moveData.lobbyId, 'completed');
+
+        await safeRPSDatabase('createBattle', {
+          id: battleResult.id,
+          lobbyId: moveData.lobbyId,
+          player1Id: lobby.creator.userId,
+          player2Id: lobby.opponent.userId,
+          amount: lobby.creator.amount,
+          serverSeed: lobby.hashedSeed,
+          hashedSeed: lobby.hashedSeed,
+          nonce: moveData.nonce,
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('completeBattle', battleResult.id, {
+          player1Move: move1,
+          player2Move: move2,
+          winnerId: winnerId === 'draw' ? null : winnerId,
+          payout: payout
+        });
+
+        let player1Result = 'lose';
+        let player2Result = 'lose';
+        if (winnerId === 'draw') {
+          player1Result = 'draw';
+          player2Result = 'draw';
+        } else if (winnerId === lobby.creator.userId) {
+          player1Result = 'win';
+          player2Result = 'lose';
+        } else {
+          player1Result = 'lose';
+          player2Result = 'win';
+        }
+
+        await safeRPSDatabase('addUserHistory', {
+          id: battleResult.id + '_p1',
+          userId: lobby.creator.userId,
+          opponentId: lobby.opponent.userId,
+          opponentUsername: lobby.opponent.username,
+          userMove: move1,
+          opponentMove: move2,
+          result: player1Result,
+          amount: lobby.creator.amount,
+          payout: player1Result === 'win' ? payout : (player1Result === 'draw' ? lobby.creator.amount : 0),
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('addUserHistory', {
+          id: battleResult.id + '_p2',
+          userId: lobby.opponent.userId,
+          opponentId: lobby.creator.userId,
+          opponentUsername: lobby.creator.username,
+          userMove: move2,
+          opponentMove: move1,
+          result: player2Result,
+          amount: lobby.opponent.amount,
+          payout: player2Result === 'win' ? payout : (player2Result === 'draw' ? lobby.opponent.amount : 0),
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('addRecentBattle', {
+          id: battleResult.id,
+          player1Id: lobby.creator.userId,
+          player1Username: lobby.creator.username,
+          player1Avatar: lobby.creator.profilePicture || '/default-avatar.png',
+          player1Move: move1,
+          player2Id: lobby.opponent.userId,
+          player2Username: lobby.opponent.username,
+          player2Avatar: lobby.opponent.profilePicture || '/default-avatar.png',
+          player2Move: move2,
+          winnerId: winnerId === 'draw' ? null : winnerId,
+          winnerUsername: winnerId === 'draw' ? null : (winnerId === lobby.creator.userId ? lobby.creator.username : lobby.opponent.username),
+          amount: lobby.creator.amount,
+          payout: payout,
+          isVsBot: false
+        });
+
+        gameState.rps.history.unshift(battleResult);
+        if (gameState.rps.history.length > 50) {
+          gameState.rps.history = gameState.rps.history.slice(0, 50);
+        }
+
+        io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
+        
+        const freshHistory = await safeRPSDatabase('getBattleHistory', 10);
+        if (freshHistory && Array.isArray(freshHistory)) {
+          const formattedHistory = freshHistory.map(battle => ({
+            id: battle.id,
+            player1: {
+              id: battle.player1_id,
+              username: battle.player1_username,
+              profilePicture: battle.player1_avatar
+            },
+            player2: battle.player2_id ? {
+              id: battle.player2_id,
+              username: battle.player2_username || 'Bot',
+              profilePicture: battle.player2_avatar || '/bot-avatar.png'
+            } : {
+              id: 'bot',
+              username: 'Bot',
+              profilePicture: '/bot-avatar.png'
+            },
+            moves: {
+              [battle.player1_id]: battle.player1_move,
+              [battle.player2_id || 'bot']: battle.player2_move
+            },
+            winner: battle.winner_id || (battle.is_vs_bot && battle.player1_move !== battle.player2_move ? 'bot' : battle.winner_id),
+            amount: Number(battle.amount),
+            payout: Number(battle.payout),
+            isVsBot: battle.is_vs_bot,
+            createdAt: battle.created_at
+          }));
+          io.to('rps-room').emit('battle-history-updated', formattedHistory);
+        } else {
+          io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
+        }
+        
+        gameState.rps.activeBattles.delete(moveData.lobbyId);
+        gameState.rps.lobbies.delete(moveData.lobbyId);
+        io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
+        
+        console.log('✅ PvP battle completed:', battleResult.id, 'Winner:', winnerId, 'Payout:', payout);
+      } else {
+        console.log(`Waiting for more moves: ${battle.submittedCount}/2 submitted`);
+      }
+    }
+  });
 
   // Chat Events
   socket.on('join-chat', async (userData) => {
@@ -855,7 +1282,6 @@ io.on('connection', (socket) => {
       }
 
       console.log(`💬 Chat message from ${messageData.username}: ${messageData.message}`);
-      console.log(`🖼️ Profile picture: ${message.profilePicture}`);
 
       io.to('chat-room').emit('new-message', message);
     } catch (error) {
@@ -889,7 +1315,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     
-    // ROBUST: Clean up dice game
+    // Clean up dice game
     if (gameState.dice.players.has(socket.id)) {
       const player = gameState.dice.players.get(socket.id);
       gameState.dice.players.delete(socket.id);
@@ -921,9 +1347,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// ROBUST Dice game loop - completely rewritten for reliability
+// Dice game loop - runs every 30 seconds
 function startDiceGameLoop() {
-  console.log('🎲 Starting ROBUST dice game loop...');
+  console.log('🎲 Starting dice game loop...');
   
   // Start first game immediately
   startNewDiceGame();
@@ -947,7 +1373,7 @@ function startDiceGameLoop() {
 async function startNewDiceGame() {
   console.log('🎲 Starting new dice game...');
   
-  // ROBUST: Complete cleanup before starting new game
+  // Complete cleanup before starting new game
   cleanupGameState();
   
   const gameId = generateGameId();
@@ -968,7 +1394,7 @@ async function startNewDiceGame() {
     nonce: gameState.dice.gameCounter
   };
 
-  // ROBUST: Save game to database FIRST
+  // Save game to database FIRST
   const dbSuccess = await safeDiceDatabase('createGame', {
     id: gameId,
     serverSeed,
@@ -1002,7 +1428,7 @@ async function startNewDiceGame() {
 
   console.log(`🎲 Game ${gameId} started - betting phase (25 seconds)`);
 
-  // ROBUST: Betting phase countdown with proper cleanup
+  // Betting phase countdown with proper cleanup
   gameState.dice.bettingInterval = setInterval(() => {
     if (!gameState.dice.currentGame || gameState.dice.currentGame.id !== gameId) {
       console.log('🎲 Game state changed, clearing betting interval');
@@ -1058,7 +1484,7 @@ function startDiceRolling() {
     timeLeft: 5
   });
 
-  // ROBUST: Rolling phase with proper cleanup
+  // Rolling phase with proper cleanup
   let rollingTime = 5;
   const rollingInterval = setInterval(() => {
     if (!gameState.dice.currentGame || gameState.dice.currentGame.id !== gameId) {
@@ -1100,7 +1526,7 @@ async function completeDiceGame() {
 
   console.log(`🎲 Game ${gameId} - dice result: ${diceResult.value} (${diceResult.isOdd ? 'ODD' : 'EVEN'})`);
 
-  // ROBUST: Process all bets and calculate winners/losers
+  // Process all bets and calculate winners/losers
   const winners = [];
   const losers = [];
   let totalWagered = 0;
@@ -1123,7 +1549,7 @@ async function completeDiceGame() {
         payout
       });
       
-      // ROBUST: Update winner's balance and stats with error handling
+      // Update winner's balance and stats
       try {
         await safeUpdateUserBalance(player.userId, payout, 'add');
         await safeUpdateUserStats(player.userId, player.amount, payout);
@@ -1134,7 +1560,7 @@ async function completeDiceGame() {
     } else {
       losers.push(player);
       
-      // ROBUST: Update loser's stats with error handling
+      // Update loser's stats
       try {
         await safeUpdateUserStats(player.userId, player.amount, 0);
         console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (bet on ${player.choice})`);
@@ -1144,7 +1570,7 @@ async function completeDiceGame() {
     }
   }
 
-  // ROBUST: Update bet results in database with proper error handling
+  // Update bet results in database
   for (const [socketId, player] of gameState.dice.players.entries()) {
     const isWinner = winners.some(w => w.userId === player.userId);
     const payout = isWinner ? winners.find(w => w.userId === player.userId)?.payout || 0 : 0;
@@ -1173,7 +1599,7 @@ async function completeDiceGame() {
     timestamp: new Date()
   };
 
-  // ROBUST: Save completed game to database
+  // Save completed game to database
   try {
     await safeDiceDatabase('completeGame', gameId, {
       diceValue: diceResult.value,
@@ -1194,7 +1620,7 @@ async function completeDiceGame() {
 
   console.log(`🎲 Game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
 
-  // ROBUST: Broadcast result to all players with error handling
+  // Broadcast result to all players
   try {
     io.to('dice-room').emit('dice-result', gameResult);
     
@@ -1221,10 +1647,9 @@ async function completeDiceGame() {
 
   console.log(`🎲 Game ${gameId} - all results broadcast, scheduling cleanup`);
 
-  // ROBUST: Schedule cleanup for next game
+  // Schedule cleanup for next game
   setTimeout(() => {
     console.log(`🎲 Game ${gameId} - cleanup complete, ready for next game`);
-    // Game loop will handle starting the next game
   }, 5000);
 }
 
