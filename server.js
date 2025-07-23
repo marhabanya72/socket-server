@@ -734,7 +734,7 @@ io.on('connection', (socket) => {
       }
     }
 
-    // Create bet data
+    // Create bet data with stored bet ID
     const playerBet = {
       userId: betData.userId,
       username: betData.username,
@@ -743,11 +743,13 @@ io.on('connection', (socket) => {
       socketId: socket.id,
       profilePicture: betData.profilePicture || socket.userData?.profilePicture || '/default-avatar.png',
       timestamp: new Date(),
-      gameId: gameState.dice.currentGame.id
+      gameId: gameState.dice.currentGame.id,
+      betId: betId // Store the bet ID for later reference
     };
 
-    // FIXED: Save bet to database FIRST with proper constraint checks
-    const betId = `bet_${gameState.dice.currentGame.id}_${betData.userId}`;
+    // FIXED: Generate shorter bet ID (max 36 chars for database)
+    const crypto = require('crypto');
+    const betId = crypto.randomUUID(); // Standard UUID format (36 chars)
     console.log(`🎲 Attempting to save bet to database: ${betId}`);
     
     const dbSuccess = await safeDiceDatabase('placeBet', {
@@ -1613,7 +1615,8 @@ async function completeDiceGame() {
     const isWinner = winners.some(w => w.userId === player.userId);
     const payout = isWinner ? winners.find(w => w.userId === player.userId)?.payout || 0 : 0;
     
-    const betId = `bet_${gameId}_${player.userId}`;
+    // Use the stored bet ID from player data
+    const betId = player.betId;
     
     try {
       await safeDiceDatabase('updateBetResult', betId, isWinner, payout);
