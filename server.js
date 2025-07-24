@@ -1,4 +1,4 @@
-// Complete Socket.IO server for Railway deployment - FIXED VERSION
+// Complete Socket.IO server for Railway deployment - OPTIMIZED VERSION
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -201,7 +201,7 @@ try {
     }
   };
 
-  // RPS Database functions
+  // RPS Database functions (unchanged)
   RPSDatabase = {
     createLobby: async (lobbyData) => {
       let connection;
@@ -510,7 +510,8 @@ const gameState = {
     players: new Map(),
     gameCounter: 0,
     bettingInterval: null,
-    rollingTimeout: null
+    rollingTimeout: null,
+    isProcessing: false // NEW: Track if we're processing a game
   },
   rps: {
     lobbies: new Map(),
@@ -1376,30 +1377,22 @@ io.on('connection', (socket) => {
   });
 });
 
-// Dice game loop - runs every 30 seconds
+// OPTIMIZED: Event-driven dice game loop - starts next game immediately after completion
 function startDiceGameLoop() {
-  console.log('🎲 Starting dice game loop...');
+  console.log('🎲 Starting optimized dice game loop...');
   
   // Start first game immediately
   startNewDiceGame();
-  
-  // Set interval for subsequent games
-  setInterval(() => {
-    console.log('🎲 Interval triggered - checking if we need to start new game...');
-    
-    // Only start new game if no current game or current game is stuck
-    if (!gameState.dice.currentGame || 
-        (gameState.dice.currentGame.phase === 'complete' && 
-         Date.now() - gameState.dice.currentGame.completedAt > 10000)) {
-      console.log('🎲 Starting new game from interval...');
-      startNewDiceGame();
-    } else {
-      console.log(`🎲 Game already running: ${gameState.dice.currentGame.id} - ${gameState.dice.currentGame.phase}`);
-    }
-  }, 35000); // Every 35 seconds (5 second buffer)
 }
 
 async function startNewDiceGame() {
+  // Prevent overlapping games
+  if (gameState.dice.isProcessing) {
+    console.log('🎲 Game already being processed, skipping...');
+    return;
+  }
+
+  gameState.dice.isProcessing = true;
   console.log('🎲 Starting new dice game...');
   
   // Complete cleanup before starting new game
@@ -1444,7 +1437,8 @@ async function startNewDiceGame() {
 
   if (!dbSuccess) {
     console.error('❌ Failed to save game to database after 3 retries, retrying entire function...');
-    setTimeout(() => startNewDiceGame(), 5000);
+    gameState.dice.isProcessing = false;
+    setTimeout(() => startNewDiceGame(), 2000);
     return;
   }
 
@@ -1506,6 +1500,7 @@ async function startNewDiceGame() {
 function startDiceRolling() {
   if (!gameState.dice.currentGame) {
     console.error('🎲 No current game to start rolling');
+    gameState.dice.isProcessing = false;
     return;
   }
 
@@ -1548,6 +1543,7 @@ function startDiceRolling() {
 async function completeDiceGame() {
   if (!gameState.dice.currentGame) {
     console.error('🎲 No current game to complete');
+    gameState.dice.isProcessing = false;
     return;
   }
 
@@ -1574,6 +1570,9 @@ async function completeDiceGame() {
 
   console.log(`🎲 Processing ${gameState.dice.players.size} bets for game ${gameId}`);
 
+  // Process all database operations in parallel for speed
+  const dbOperations = [];
+
   for (const [socketId, player] of gameState.dice.players.entries()) {
     totalWagered += player.amount;
     
@@ -1589,40 +1588,36 @@ async function completeDiceGame() {
         payout
       });
       
-      // Update winner's balance and stats
-      try {
-        await safeUpdateUserBalance(player.userId, payout, 'add');
-        await safeUpdateUserStats(player.userId, player.amount, payout);
-        console.log(`🏆 Winner: ${player.username} won ${payout} USDC (bet: ${player.amount} on ${player.choice})`);
-      } catch (error) {
-        console.error(`❌ Error updating winner ${player.username}:`, error);
-      }
+      // Queue database operations
+      dbOperations.push(
+        safeUpdateUserBalance(player.userId, payout, 'add'),
+        safeUpdateUserStats(player.userId, player.amount, payout),
+        safeDiceDatabase('updateBetResult', player.betId, true, payout)
+      );
+      
+      console.log(`🏆 Winner: ${player.username} won ${payout} USDC (bet: ${player.amount} on ${player.choice})`);
     } else {
       losers.push(player);
       
-      // Update loser's stats
-      try {
-        await safeUpdateUserStats(player.userId, player.amount, 0);
-        console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (bet on ${player.choice})`);
-      } catch (error) {
-        console.error(`❌ Error updating loser ${player.username}:`, error);
-      }
+      // Queue database operations
+      dbOperations.push(
+        safeUpdateUserStats(player.userId, player.amount, 0),
+        safeDiceDatabase('updateBetResult', player.betId, false, 0)
+      );
+      
+      console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (bet on ${player.choice})`);
     }
   }
 
-  // Update bet results in database
-  for (const [socketId, player] of gameState.dice.players.entries()) {
-    const isWinner = winners.some(w => w.userId === player.userId);
-    const payout = isWinner ? winners.find(w => w.userId === player.userId)?.payout || 0 : 0;
-    
-    // Use the stored bet ID from player data
-    const betId = player.betId;
-    
-    try {
-      await safeDiceDatabase('updateBetResult', betId, isWinner, payout);
-    } catch (error) {
-      console.error(`❌ Error updating bet result for ${player.username}:`, error);
-    }
+  // Execute all database operations in parallel
+  console.log(`🎲 Executing ${dbOperations.length} database operations in parallel...`);
+  const startTime = Date.now();
+  
+  try {
+    await Promise.all(dbOperations);
+    console.log(`✅ All database operations completed in ${Date.now() - startTime}ms`);
+  } catch (error) {
+    console.error('❌ Error in database operations:', error);
   }
 
   // Create game result
@@ -1686,12 +1681,16 @@ async function completeDiceGame() {
     console.error(`❌ Error broadcasting game results:`, error);
   }
 
-  console.log(`🎲 Game ${gameId} - all results broadcast, scheduling cleanup`);
+  console.log(`🎲 Game ${gameId} - all results broadcast`);
 
-  // Schedule cleanup for next game
+  // OPTIMIZED: Start next game immediately after all operations complete
+  gameState.dice.isProcessing = false;
+  
+  // Start next game with a short delay to allow client updates
   setTimeout(() => {
-    console.log(`🎲 Game ${gameId} - cleanup complete, ready for next game`);
-  }, 5000);
+    console.log(`🎲 Starting next game immediately after completion of ${gameId}`);
+    startNewDiceGame();
+  }, 2000); // Just 2 seconds for client sync
 }
 
 // Start the server
