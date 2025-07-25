@@ -802,6 +802,7 @@ io.on('connection', (socket) => {
     try {
       console.log(`🚀 Crash bet received from ${betData.username}:`, betData);
 
+      // Immediate validation with safe error handling
       if (!gameState.crash.currentGame) {
         console.log(`🚀 Bet rejected - no current crash game`);
         socket.emit('crash-bet-error', 'No active crash game found');
@@ -879,10 +880,10 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Add player to game state
+      // Add player to game state FIRST
       gameState.crash.players.set(socket.id, playerBet);
-
       console.log(`✅ Crash bet placed successfully for ${betData.username}: ${betAmount} USDC`);
+      console.log(`🚀 Player count for crash game ${gameState.crash.currentGame.id}: ${gameState.crash.players.size}`);
 
       const playerJoinedData = {
         playerId: socket.id,
@@ -893,25 +894,31 @@ io.on('connection', (socket) => {
         isCashedOut: false
       };
 
-      // Broadcast to all players
-      try {
-        io.to('crash-room').emit('crash-player-joined', playerJoinedData);
-      } catch (broadcastError) {
-        console.error(`❌ Error broadcasting crash player joined:`, broadcastError);
-      }
+      // Use setTimeout to ensure safe emission and prevent disconnection
+      setTimeout(() => {
+        try {
+          console.log(`🚀 Broadcasting crash player joined to all clients...`);
+          io.to('crash-room').emit('crash-player-joined', playerJoinedData);
+          console.log(`✅ Broadcast successful`);
+        } catch (broadcastError) {
+          console.error(`❌ Error broadcasting crash player joined:`, broadcastError);
+        }
+      }, 50);
 
-      // Confirm to player
-      try {
-        socket.emit('crash-bet-placed-confirmation', {
-          success: true,
-          bet: playerBet,
-          message: `Crash bet placed: ${betAmount} USDC - Cash out before it crashes!`
-        });
-      } catch (confirmError) {
-        console.error(`❌ Error sending crash bet confirmation:`, confirmError);
-      }
-
-      console.log(`🚀 Player count for crash game ${gameState.crash.currentGame.id}: ${gameState.crash.players.size}`);
+      // Confirm to player with delay
+      setTimeout(() => {
+        try {
+          console.log(`🚀 Sending confirmation to player...`);
+          socket.emit('crash-bet-placed-confirmation', {
+            success: true,
+            bet: playerBet,
+            message: `Crash bet placed: ${betAmount} USDC - Cash out before it crashes!`
+          });
+          console.log(`✅ Confirmation sent successfully`);
+        } catch (confirmError) {
+          console.error(`❌ Error sending crash bet confirmation:`, confirmError);
+        }
+      }, 100);
 
     } catch (error) {
       console.error(`❌ Unhandled error in place-crash-bet:`, error);
