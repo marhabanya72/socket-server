@@ -1,5 +1,5 @@
 // /Users/macbook/Documents/n1verse/server.js
-// PROFESSIONAL CRASH GAME SERVER - BULLETPROOF SYSTEM
+// Complete Socket.IO server for Railway deployment - WITH COMPLETELY FIXED CRASH GAME
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -8,7 +8,7 @@ const port = process.env.PORT || 3001;
 // Create HTTP server
 const httpServer = createServer();
 
-// Create Socket.IO server with ROBUST CORS
+// Create Socket.IO server with CORS for Vercel
 const io = new Server(httpServer, {
   cors: {
     origin: [
@@ -19,10 +19,7 @@ const io = new Server(httpServer, {
     ],
     methods: ["GET", "POST"],
     credentials: true
-  },
-  transports: ['websocket', 'polling'],
-  pingTimeout: 60000,
-  pingInterval: 25000
+  }
 });
 
 // Database setup
@@ -38,10 +35,9 @@ try {
     password: process.env.DB_PASSWORD || 'giqaKuZnR72ZdQL=m.DVdtUB',
     database: process.env.DB_NAME || 's175260_casino-n1verse',
     waitForConnections: true,
-    acquireTimeout: 120000,
-    timeout: 120000,
-    reconnect: true,
-    connectionLimit: 10
+    acquireTimeout: 60000,
+    timeout: 60000,
+    reconnect: true
   });
 
   // User Database functions
@@ -445,7 +441,7 @@ async function safeCrashDatabase(functionName, ...args) {
   }
 }
 
-// PROFESSIONAL CRASH GAME STATE MANAGEMENT
+// Game state management
 const gameState = {
   dice: {
     currentGame: null,
@@ -466,10 +462,7 @@ const gameState = {
     isProcessing: false,
     currentMultiplier: 1.00,
     startTime: null,
-    crashed: false,
-    pendingBets: new Map(), // Track pending bets
-    betQueue: [], // Queue for bet processing
-    connectionStates: new Map() // Track connection states
+    crashed: false
   },
   rps: {
     lobbies: new Map(),
@@ -481,86 +474,6 @@ const gameState = {
   },
   connectedUsers: new Map()
 };
-
-// PROFESSIONAL CRASH POINT CALCULATION
-function generateProvablyFairCrashPoint(serverSeed, nonce, clientSeed = 'default') {
-  const crypto = require('crypto');
-  
-  // Create HMAC with server seed as key
-  const hmac = crypto.createHmac('sha256', serverSeed);
-  hmac.update(`${nonce}:${clientSeed}:crash`);
-  const hash = hmac.digest('hex');
-  
-  // Convert first 8 characters to integer
-  const hexSubstring = hash.substring(0, 8);
-  const intValue = parseInt(hexSubstring, 16);
-  
-  // House edge calculation (3% house edge)
-  const houseEdge = 0.03;
-  const adjustedValue = intValue * (1 - houseEdge);
-  
-  // Advanced crash point calculation using exponential distribution
-  const maxValue = Math.pow(2, 32) - 1;
-  const normalized = adjustedValue / maxValue;
-  
-  // Professional crash formula with proper distribution
-  let crashPoint;
-  if (normalized < 0.0001) {
-    // Instant crash (0.01% chance)
-    crashPoint = 1.00;
-  } else if (normalized < 0.01) {
-    // Very low crashes (1% chance) - between 1.00x and 1.10x
-    crashPoint = 1.00 + (normalized / 0.01) * 0.10;
-  } else if (normalized < 0.33) {
-    // Low crashes (32% chance) - between 1.10x and 2.00x
-    const adjustedNorm = (normalized - 0.01) / 0.32;
-    crashPoint = 1.10 + adjustedNorm * 0.90;
-  } else if (normalized < 0.66) {
-    // Medium crashes (33% chance) - between 2.00x and 5.00x
-    const adjustedNorm = (normalized - 0.33) / 0.33;
-    crashPoint = 2.00 + adjustedNorm * 3.00;
-  } else if (normalized < 0.90) {
-    // High crashes (24% chance) - between 5.00x and 20.00x
-    const adjustedNorm = (normalized - 0.66) / 0.24;
-    crashPoint = 5.00 + adjustedNorm * 15.00;
-  } else if (normalized < 0.99) {
-    // Very high crashes (9% chance) - between 20.00x and 100.00x
-    const adjustedNorm = (normalized - 0.90) / 0.09;
-    crashPoint = 20.00 + adjustedNorm * 80.00;
-  } else {
-    // Astronomical crashes (1% chance) - between 100.00x and 10000.00x
-    const adjustedNorm = (normalized - 0.99) / 0.01;
-    crashPoint = 100.00 + adjustedNorm * 9900.00;
-  }
-  
-  // Round to 2 decimal places and ensure minimum
-  return Math.max(1.00, Math.round(crashPoint * 100) / 100);
-}
-
-// PROFESSIONAL MULTIPLIER CALCULATION DURING FLIGHT
-function calculateFlightMultiplier(elapsedMs, targetCrashPoint) {
-  const elapsedSeconds = elapsedMs / 1000;
-  
-  // Professional exponential curve calculation
-  // Base growth rate adjusted by target crash point
-  const baseRate = 0.08; // 8% base growth per second
-  const accelerationFactor = Math.log(targetCrashPoint) / 10;
-  const finalRate = baseRate + accelerationFactor;
-  
-  // Exponential growth with slight acceleration
-  let multiplier = 1.00 + (elapsedSeconds * finalRate) + 
-                   (Math.pow(elapsedSeconds, 1.5) * 0.02);
-  
-  // Ensure smooth progression towards target
-  const progressRatio = multiplier / targetCrashPoint;
-  if (progressRatio > 0.98) {
-    // Slow down as we approach target
-    const remainingDistance = targetCrashPoint - multiplier;
-    multiplier += remainingDistance * 0.5;
-  }
-  
-  return Math.max(1.00, Math.round(multiplier * 100) / 100);
-}
 
 // Utility functions
 function generateGameId() {
@@ -581,6 +494,11 @@ function generateHash(data) {
   return require('crypto').createHash('sha256').update(data).digest('hex');
 }
 
+function generateHashedSeed() {
+  const seed = generateServerSeed();
+  return generateHash(seed);
+}
+
 function generateProvablyFairDiceResult(serverSeed, nonce) {
   const crypto = require('crypto');
   const hmac = crypto.createHmac('sha256', serverSeed);
@@ -597,7 +515,29 @@ function generateProvablyFairDiceResult(serverSeed, nonce) {
   };
 }
 
-// Clear timers functions
+function generateProvablyFairCrashPoint(serverSeed, nonce) {
+  const crypto = require('crypto');
+  const hmac = crypto.createHmac('sha256', serverSeed);
+  hmac.update(`${nonce}:crash`);
+  const hash = hmac.digest('hex');
+  
+  const hexSubstring = hash.substring(0, 8);
+  const H = parseInt(hexSubstring, 16);
+  const luckyNumber = H % 1000000;
+  
+  let crashPoint;
+  
+  if (luckyNumber < 30000) {
+    crashPoint = 100;
+  } else {
+    crashPoint = (97 * 1000000) / (1000000 - luckyNumber);
+  }
+  
+  const multiplier = Math.floor(crashPoint) / 100;
+  return Math.max(1.00, Math.min(multiplier, 50000.00));
+}
+
+// Clear dice game timers only
 function clearDiceTimers() {
   if (gameState.dice.bettingInterval) {
     clearInterval(gameState.dice.bettingInterval);
@@ -610,6 +550,7 @@ function clearDiceTimers() {
   console.log('🧹 Dice timers cleared');
 }
 
+// Clear crash game timers only
 function clearCrashTimers() {
   if (gameState.crash.bettingInterval) {
     clearInterval(gameState.crash.bettingInterval);
@@ -622,6 +563,7 @@ function clearCrashTimers() {
   console.log('🧹 Crash timers cleared');
 }
 
+// Clear all timers and intervals (for shutdown)
 function clearAllGameTimers() {
   console.log('🧹 Starting complete game cleanup...');
   clearDiceTimers();
@@ -629,49 +571,33 @@ function clearAllGameTimers() {
   console.log('🧹 All game timers cleared');
 }
 
+// Complete dice game cleanup
 function cleanupDiceState() {
   const connectedDiceSockets = Array.from(gameState.dice.players.keys());
   gameState.dice.players.clear();
   console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players`);
 }
 
+// Complete crash game cleanup
 function cleanupCrashState() {
   const connectedCrashSockets = Array.from(gameState.crash.players.keys());
   gameState.crash.players.clear();
-  gameState.crash.pendingBets.clear();
-  gameState.crash.betQueue = [];
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = null;
   gameState.crash.crashed = false;
   console.log(`🧹 Cleared ${connectedCrashSockets.length} crash players`);
 }
 
-// ROBUST SOCKET CONNECTION HANDLING
+// Socket.IO event handlers
 io.on('connection', (socket) => {
-  console.log(`🔌 User connected: ${socket.id}`);
-  
-  
-  socket.on('error', (error) => {
-    console.error(`❌ Socket error for ${socket.id}:`, error);
-  });
+  console.log('User connected:', socket.id);
 
   socket.on('user-connect', (userData) => {
-    try {
-      gameState.connectedUsers.set(socket.id, userData);
-      socket.userData = userData;
-      gameState.crash.connectionStates.set(socket.id, {
-        userId: userData?.id,
-        username: userData?.username,
-        connected: true,
-        lastSeen: Date.now()
-      });
-      console.log(`✅ User data set for ${socket.id}: ${userData?.username}`);
-    } catch (error) {
-      console.error(`❌ Error in user-connect:`, error);
-    }
+    gameState.connectedUsers.set(socket.id, userData);
+    socket.userData = userData;
   });
 
-  // DICE GAME EVENTS (unchanged working version)
+  // Dice Game Events (working version - unchanged)
   socket.on('join-dice', (userData) => {
     console.log(`🎲 User joining dice room: ${userData?.username} (${socket.id})`);
     socket.join('dice-room');
@@ -832,103 +758,77 @@ io.on('connection', (socket) => {
     }
   });
 
-  // BULLETPROOF CRASH GAME EVENTS
-  socket.on('join-crash', async (userData) => {
-    try {
-      console.log(`🚀 BULLETPROOF: User joining crash room: ${userData?.username} (${socket.id})`);
-      
-      // Join room with error handling
-      socket.join('crash-room');
-      socket.userData = userData;
-      
-      // Update connection state
-      gameState.crash.connectionStates.set(socket.id, {
-        userId: userData?.id,
-        username: userData?.username,
-        connected: true,
-        lastSeen: Date.now()
+  // FIXED CRASH GAME EVENTS
+  socket.on('join-crash', (userData) => {
+    console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
+    socket.join('crash-room');
+    socket.userData = userData;
+    
+    if (gameState.crash.currentGame) {
+      console.log(`🚀 Sending current crash game state to ${userData?.username}:`, {
+        gameId: gameState.crash.currentGame.id,
+        phase: gameState.crash.currentGame.phase,
+        timeLeft: gameState.crash.currentGame.timeLeft,
+        currentMultiplier: gameState.crash.currentMultiplier
       });
       
-      // Send current game state
-      if (gameState.crash.currentGame) {
-        console.log(`🚀 BULLETPROOF: Sending current crash game state to ${userData?.username}`);
-        
-        const gameStateData = {
-          gameId: gameState.crash.currentGame.id,
-          hashedSeed: gameState.crash.currentGame.hashedSeed,
-          phase: gameState.crash.currentGame.phase,
-          timeLeft: gameState.crash.currentGame.timeLeft,
-          currentMultiplier: gameState.crash.currentMultiplier,
-          result: gameState.crash.currentGame.result
-        };
-        
-        // Safe emit with delay
-        setTimeout(() => {
-          try {
-            socket.emit('crash-game-state', gameStateData);
-          } catch (emitError) {
-            console.error(`❌ Error emitting crash game state:`, emitError);
-          }
-        }, 100);
-      }
+      socket.emit('crash-game-state', {
+        gameId: gameState.crash.currentGame.id,
+        hashedSeed: gameState.crash.currentGame.hashedSeed,
+        phase: gameState.crash.currentGame.phase,
+        timeLeft: gameState.crash.currentGame.timeLeft,
+        currentMultiplier: gameState.crash.currentMultiplier,
+        result: gameState.crash.currentGame.result
+      });
+    } else {
+      console.log('🚀 No current crash game, will start one soon');
+    }
 
-      // Send players list and check for existing bets
-      const currentPlayers = Array.from(gameState.crash.players.values());
-      if (currentPlayers.length > 0) {
-        setTimeout(() => {
-          try {
-            socket.emit('crash-players-list', currentPlayers);
-            
-            // Check for existing bet from this user
-            const existingBet = currentPlayers.find(p => p.userId === userData?.id);
-            if (existingBet) {
-              console.log(`🚀 BULLETPROOF: Found existing bet for ${userData?.username}:`, existingBet);
-            }
-          } catch (emitError) {
-            console.error(`❌ Error emitting crash players list:`, emitError);
-          }
-        }, 200);
+    // Send current players list (including any existing bet from this user)
+    const currentPlayers = Array.from(gameState.crash.players.values());
+    if (currentPlayers.length > 0) {
+      socket.emit('crash-players-list', currentPlayers);
+      
+      // Check if this user already has a bet
+      const existingBet = currentPlayers.find(p => p.userId === userData?.id);
+      if (existingBet) {
+        console.log(`🚀 Found existing bet for ${userData?.username}:`, existingBet);
       }
-      
-      console.log(`✅ BULLETPROOF: User ${userData?.username} successfully joined crash room`);
-      
-    } catch (error) {
-      console.error(`❌ BULLETPROOF: Error in join-crash:`, error);
     }
   });
 
-  // BULLETPROOF CRASH BET PLACEMENT - NO API DEPENDENCY
+  // FIXED: Changed from 'place-crash-bet-simple' to 'place-crash-bet'
   socket.on('place-crash-bet', async (betData) => {
     try {
-      console.log(`🚀 BULLETPROOF: Crash bet received from ${betData.username}:`, betData);
+      console.log(`🚀 Crash bet received from ${betData.username}:`, betData);
 
-      // Immediate validation
+      // Immediate validation with safe error handling
       if (!gameState.crash.currentGame) {
-        console.log(`🚀 BULLETPROOF: Bet rejected - no current crash game`);
+        console.log(`🚀 Bet rejected - no current crash game`);
         socket.emit('crash-bet-error', 'No active crash game found');
         return;
       }
 
       if (gameState.crash.currentGame.phase !== 'betting') {
-        console.log(`🚀 BULLETPROOF: Bet rejected - invalid game phase: ${gameState.crash.currentGame.phase}`);
+        console.log(`🚀 Bet rejected - invalid game phase: ${gameState.crash.currentGame.phase}`);
         socket.emit('crash-bet-error', 'Betting is not currently open');
         return;
       }
 
-      // Check if user already has a bet (check both active players and pending bets)
-      const existingPlayer = Array.from(gameState.crash.players.values())
-        .find(p => p.userId === betData.userId);
-      const existingPending = gameState.crash.pendingBets.get(betData.userId);
-      
-      if (existingPlayer || existingPending) {
-        console.log(`🚀 BULLETPROOF: Bet rejected - user ${betData.username} already has a bet`);
-        socket.emit('crash-bet-error', 'You have already placed a bet for this round');
-        return;
+      // Check if user already has a bet
+      let userAlreadyBet = false;
+      for (const [socketId, player] of gameState.crash.players.entries()) {
+        if (player.userId === betData.userId) {
+          userAlreadyBet = true;
+          console.log(`🚀 Bet rejected - user ${betData.username} already placed bet`);
+          socket.emit('crash-bet-error', 'You have already placed a bet for this round');
+          return;
+        }
       }
 
       // Validate bet data
       if (!betData.userId || !betData.username || !betData.amount) {
-        console.log(`🚀 BULLETPROOF: Bet rejected - missing required data`);
+        console.log(`🚀 Bet rejected - missing required data:`, betData);
         socket.emit('crash-bet-error', 'Invalid bet data - missing required fields');
         return;
       }
@@ -936,204 +836,211 @@ io.on('connection', (socket) => {
       // Validate bet amount
       const betAmount = Number(betData.amount);
       if (isNaN(betAmount) || betAmount <= 0 || betAmount > 10000) {
-        console.log(`🚀 BULLETPROOF: Bet rejected - invalid amount: ${betAmount}`);
+        console.log(`🚀 Bet rejected - invalid amount: ${betAmount}`);
         socket.emit('crash-bet-error', 'Invalid bet amount');
         return;
       }
 
       const crypto = require('crypto');
       const betId = crypto.randomUUID();
-      
-      console.log(`🚀 BULLETPROOF: Processing crash bet ${betId} for ${betData.username}`);
+      console.log(`🚀 Attempting to save crash bet to database: ${betId}`);
 
-      // Create bet object
       const playerBet = {
         userId: betData.userId,
         username: betData.username,
         amount: betAmount,
         socketId: socket.id,
-        profilePicture: betData.profilePicture || '/default-avatar.png',
-        timestamp: Date.now(),
+        profilePicture: betData.profilePicture || socket.userData?.profilePicture || '/default-avatar.png',
+        timestamp: new Date(),
         gameId: gameState.crash.currentGame.id,
         betId: betId,
         isCashedOut: false,
         cashOutAt: null,
         payout: 0
       };
-
-      // Add to pending bets first
-      gameState.crash.pendingBets.set(betData.userId, playerBet);
       
-      // Process bet asynchronously
+      // Try to save to database with error handling
+      let dbSuccess = false;
       try {
-        const dbSuccess = await safeCrashDatabase('placeBet', {
+        dbSuccess = await safeCrashDatabase('placeBet', {
           id: betId,
           gameId: gameState.crash.currentGame.id,
           userId: betData.userId,
           amount: betAmount
         });
-
-        if (dbSuccess) {
-          // Move from pending to active players
-          gameState.crash.pendingBets.delete(betData.userId);
-          gameState.crash.players.set(socket.id, playerBet);
-          
-          console.log(`✅ BULLETPROOF: Crash bet placed successfully for ${betData.username}: ${betAmount} USDC`);
-
-          const playerJoinedData = {
-            playerId: socket.id,
-            userId: betData.userId,
-            username: betData.username,
-            amount: betAmount,
-            profilePicture: playerBet.profilePicture,
-            isCashedOut: false
-          };
-
-          // Safe broadcasts with delays
-          setTimeout(() => {
-            try {
-              io.to('crash-room').emit('crash-player-joined', playerJoinedData);
-              console.log(`✅ BULLETPROOF: Broadcasted player joined successfully`);
-            } catch (broadcastError) {
-              console.error(`❌ BULLETPROOF: Error broadcasting crash player joined:`, broadcastError);
-            }
-          }, 50);
-
-          setTimeout(() => {
-            try {
-              socket.emit('crash-bet-placed-confirmation', {
-                success: true,
-                bet: playerBet,
-                message: `✅ Crash bet placed: ${betAmount} USDC - Get ready to cash out!`
-              });
-              console.log(`✅ BULLETPROOF: Sent confirmation to ${betData.username}`);
-            } catch (confirmError) {
-              console.error(`❌ BULLETPROOF: Error sending crash bet confirmation:`, confirmError);
-            }
-          }, 100);
-
-        } else {
-          // Database save failed
-          gameState.crash.pendingBets.delete(betData.userId);
-          console.log(`🚀 BULLETPROOF: Bet rejected - database save failed`);
-          socket.emit('crash-bet-error', 'Failed to save bet - please try again');
-        }
-
       } catch (dbError) {
-        // Database error
-        gameState.crash.pendingBets.delete(betData.userId);
-        console.error(`❌ BULLETPROOF: Database error during crash bet placement:`, dbError);
+        console.error(`❌ Database error during crash bet placement:`, dbError);
         socket.emit('crash-bet-error', 'Database error - please try again');
+        return;
       }
+
+      if (!dbSuccess) {
+        console.log(`🚀 Bet rejected - database save failed`);
+        socket.emit('crash-bet-error', 'Failed to save bet to database - try again');
+        return;
+      }
+
+      // Add player to game state FIRST
+      gameState.crash.players.set(socket.id, playerBet);
+      console.log(`✅ Crash bet placed successfully for ${betData.username}: ${betAmount} USDC`);
+      console.log(`🚀 Player count for crash game ${gameState.crash.currentGame.id}: ${gameState.crash.players.size}`);
+
+      const playerJoinedData = {
+        playerId: socket.id,
+        userId: betData.userId,
+        username: betData.username,
+        amount: betAmount,
+        profilePicture: playerBet.profilePicture,
+        isCashedOut: false
+      };
+
+      // Use setTimeout to ensure safe emission and prevent disconnection
+      setTimeout(() => {
+        try {
+          console.log(`🚀 Broadcasting crash player joined to all clients...`);
+          io.to('crash-room').emit('crash-player-joined', playerJoinedData);
+          console.log(`✅ Broadcast successful`);
+        } catch (broadcastError) {
+          console.error(`❌ Error broadcasting crash player joined:`, broadcastError);
+        }
+      }, 50);
+
+      // Confirm to player with delay
+      setTimeout(() => {
+        try {
+          console.log(`🚀 Sending confirmation to player...`);
+          socket.emit('crash-bet-placed-confirmation', {
+            success: true,
+            bet: playerBet,
+            message: `Crash bet placed: ${betAmount} USDC - Cash out before it crashes!`
+          });
+          console.log(`✅ Confirmation sent successfully`);
+        } catch (confirmError) {
+          console.error(`❌ Error sending crash bet confirmation:`, confirmError);
+        }
+      }, 100);
 
     } catch (error) {
-      console.error(`❌ BULLETPROOF: Unhandled error in place-crash-bet:`, error);
-      // Clean up pending bet
-      if (betData?.userId) {
-        gameState.crash.pendingBets.delete(betData.userId);
-      }
+      console.error(`❌ Unhandled error in place-crash-bet:`, error);
       try {
         socket.emit('crash-bet-error', 'An unexpected error occurred - please try again');
       } catch (emitError) {
-        console.error(`❌ BULLETPROOF: Failed to emit crash bet error:`, emitError);
+        console.error(`❌ Failed to emit crash bet error message:`, emitError);
       }
     }
   });
 
-  // BULLETPROOF CASH OUT
   socket.on('crash-cash-out', async (cashOutData) => {
     try {
-      console.log(`🚀 BULLETPROOF: Cash out request from ${cashOutData.userId}`);
+      console.log(`🚀 Cash out request from ${cashOutData.userId}:`, cashOutData);
 
-      if (!gameState.crash.currentGame || gameState.crash.currentGame.phase !== 'flying') {
+      if (!gameState.crash.currentGame) {
+        console.log(`🚀 Cash out rejected - no current crash game`);
+        socket.emit('crash-cash-out-error', 'No active crash game found');
+        return;
+      }
+
+      if (gameState.crash.currentGame.phase !== 'flying') {
+        console.log(`🚀 Cash out rejected - game not in flying phase: ${gameState.crash.currentGame.phase}`);
         socket.emit('crash-cash-out-error', 'Cannot cash out right now');
         return;
       }
 
       if (gameState.crash.crashed) {
+        console.log(`🚀 Cash out rejected - rocket already crashed`);
         socket.emit('crash-cash-out-error', 'Too late! Rocket already crashed');
         return;
       }
 
       const player = gameState.crash.players.get(socket.id);
-      if (!player || player.isCashedOut) {
-        socket.emit('crash-cash-out-error', player ? 'Already cashed out' : 'No active bet found');
+      if (!player) {
+        console.log(`🚀 Cash out rejected - player not found`);
+        socket.emit('crash-cash-out-error', 'No active bet found');
+        return;
+      }
+
+      if (player.isCashedOut) {
+        console.log(`🚀 Cash out rejected - already cashed out`);
+        socket.emit('crash-cash-out-error', 'Already cashed out');
         return;
       }
 
       const currentMultiplier = gameState.crash.currentMultiplier;
       const payout = player.amount * currentMultiplier;
 
+      // Validate payout
+      if (isNaN(payout) || payout <= 0) {
+        console.log(`🚀 Cash out rejected - invalid payout calculation: ${payout}`);
+        socket.emit('crash-cash-out-error', 'Invalid payout calculation');
+        return;
+      }
+
       // Update player state
       player.isCashedOut = true;
       player.cashOutAt = currentMultiplier;
       player.payout = payout;
 
+      // Update database with error handling
+      let dbSuccess = false;
       try {
-        const dbSuccess = await safeCrashDatabase('cashOut', player.betId, currentMultiplier, payout);
+        dbSuccess = await safeCrashDatabase('cashOut', player.betId, currentMultiplier, payout);
         if (dbSuccess) {
+          // Update user balance
           await safeUpdateUserBalance(player.userId, payout, 'add');
           await safeUpdateUserStats(player.userId, player.amount, payout);
         }
-
-        console.log(`✅ BULLETPROOF: Cash out successful for ${player.username}: ${payout.toFixed(2)} USDC at ${currentMultiplier.toFixed(2)}x`);
-
-        // Safe broadcasts
-        setTimeout(() => {
-          try {
-            io.to('crash-room').emit('crash-player-cashed-out', {
-              playerId: socket.id,
-              userId: player.userId,
-              username: player.username,
-              amount: player.amount,
-              cashOutAt: currentMultiplier,
-              payout: payout
-            });
-          } catch (broadcastError) {
-            console.error(`❌ BULLETPROOF: Error broadcasting cash out:`, broadcastError);
-          }
-        }, 50);
-
-        setTimeout(() => {
-          try {
-            socket.emit('crash-cash-out-success', {
-              cashOutAt: currentMultiplier,
-              payout: payout,
-              message: `✅ Cashed out at ${currentMultiplier.toFixed(2)}x for ${payout.toFixed(2)} USDC!`
-            });
-          } catch (confirmError) {
-            console.error(`❌ BULLETPROOF: Error sending cash out confirmation:`, confirmError);
-          }
-        }, 100);
-
       } catch (dbError) {
-        console.error(`❌ BULLETPROOF: Database error during cash out:`, dbError);
+        console.error(`❌ Database error during cash out:`, dbError);
         socket.emit('crash-cash-out-error', 'Database error during cash out');
+        return;
+      }
+
+      console.log(`✅ Cash out successful for ${player.username}: ${payout.toFixed(2)} USDC at ${currentMultiplier.toFixed(2)}x`);
+
+      // Notify all players about the cash out
+      try {
+        io.to('crash-room').emit('crash-player-cashed-out', {
+          playerId: socket.id,
+          userId: player.userId,
+          username: player.username,
+          amount: player.amount,
+          cashOutAt: currentMultiplier,
+          payout: payout
+        });
+      } catch (broadcastError) {
+        console.error(`❌ Error broadcasting cash out:`, broadcastError);
+      }
+
+      // Notify the player
+      try {
+        socket.emit('crash-cash-out-success', {
+          cashOutAt: currentMultiplier,
+          payout: payout,
+          message: `Cashed out at ${currentMultiplier.toFixed(2)}x for ${payout.toFixed(2)} USDC!`
+        });
+      } catch (confirmError) {
+        console.error(`❌ Error sending cash out confirmation:`, confirmError);
       }
 
     } catch (error) {
-      console.error(`❌ BULLETPROOF: Unhandled error in crash-cash-out:`, error);
-      socket.emit('crash-cash-out-error', 'An unexpected error occurred during cash out');
+      console.error(`❌ Unhandled error in crash-cash-out:`, error);
+      try {
+        socket.emit('crash-cash-out-error', 'An unexpected error occurred during cash out');
+      } catch (emitError) {
+        console.error(`❌ Failed to emit cash out error message:`, emitError);
+      }
     }
   });
 
-  // ROBUST DISCONNECT HANDLING
-  socket.on('disconnect', (reason) => {
+  socket.on('disconnect', () => {
     try {
-      console.log(`🔌 BULLETPROOF: User disconnected: ${socket.id} (${reason})`);
-      
-      // Update connection state
-      const connectionState = gameState.crash.connectionStates.get(socket.id);
-      if (connectionState) {
-        connectionState.connected = false;
-        connectionState.lastSeen = Date.now();
-      }
+      console.log('User disconnected:', socket.id);
       
       // Clean up dice game
       if (gameState.dice.players.has(socket.id)) {
         const player = gameState.dice.players.get(socket.id);
         gameState.dice.players.delete(socket.id);
-        console.log(`🎲 BULLETPROOF: Removed dice player ${player?.username}`);
+        console.log(`🎲 Removed player ${player?.username} from dice game`);
         
         try {
           io.to('dice-room').emit('player-left', {
@@ -1145,13 +1052,12 @@ io.on('connection', (socket) => {
         }
       }
       
-      // Handle crash game disconnect (keep bet active for reconnection)
+      // Clean up crash game
       if (gameState.crash.players.has(socket.id)) {
         const player = gameState.crash.players.get(socket.id);
-        console.log(`🚀 BULLETPROOF: Crash player ${player?.username} disconnected - keeping bet active for reconnection`);
+        gameState.crash.players.delete(socket.id);
+        console.log(`🚀 Removed player ${player?.username} from crash game`);
         
-        // Don't remove from players - allow reconnection
-        // Only broadcast that they left the room
         try {
           io.to('crash-room').emit('crash-player-left', {
             playerId: socket.id,
@@ -1166,12 +1072,12 @@ io.on('connection', (socket) => {
       gameState.connectedUsers.delete(socket.id);
       
     } catch (error) {
-      console.error(`❌ BULLETPROOF: Error handling disconnect for ${socket.id}:`, error);
+      console.error(`❌ Error handling disconnect for ${socket.id}:`, error);
     }
   });
 });
 
-// DICE GAME FUNCTIONS (unchanged working version)
+// DICE GAME FUNCTIONS (unchanged - working version)
 function startDiceGameLoop() {
   console.log('🎲 Starting optimized dice game loop...');
   startNewDiceGame();
@@ -1186,6 +1092,7 @@ async function startNewDiceGame() {
   gameState.dice.isProcessing = true;
   console.log('🎲 Starting new dice game...');
   
+  // Only clear dice timers and state, don't touch crash game
   clearDiceTimers();
   cleanupDiceState();
   
@@ -1459,33 +1366,41 @@ async function completeDiceGame() {
   }, 2000);
 }
 
-// PROFESSIONAL CRASH GAME FUNCTIONS
+// COMPLETELY REWRITTEN CRASH GAME FUNCTIONS - MODELED AFTER WORKING DICE GAME
 function startCrashGameLoop() {
-  console.log('🚀 BULLETPROOF: Starting professional crash game loop...');
+  console.log('🚀 Starting crash game loop...');
   startNewCrashGame();
 }
 
 async function startNewCrashGame() {
   if (gameState.crash.isProcessing) {
-    console.log('🚀 BULLETPROOF: Crash game already being processed, skipping...');
+    console.log('🚀 Crash game already being processed, skipping...');
     return;
   }
 
   gameState.crash.isProcessing = true;
-  console.log('🚀 BULLETPROOF: Starting new professional crash game...');
+  console.log('🚀 Starting new crash game...');
   
-  // Clear previous game state
-  clearCrashTimers();
-  cleanupCrashState();
+  // Clear previous game state completely
+  if (gameState.crash.bettingInterval) {
+    clearInterval(gameState.crash.bettingInterval);
+    gameState.crash.bettingInterval = null;
+  }
+  if (gameState.crash.flyingInterval) {
+    clearInterval(gameState.crash.flyingInterval);
+    gameState.crash.flyingInterval = null;
+  }
+  
+  gameState.crash.players.clear();
+  gameState.crash.currentMultiplier = 1.00;
+  gameState.crash.startTime = null;
+  gameState.crash.crashed = false;
   
   const gameId = generateCrashGameId();
   const serverSeed = generateServerSeed();
   const hashedSeed = generateHash(serverSeed);
 
-  console.log(`🚀 BULLETPROOF: Creating new crash game: ${gameId}`);
-
-  // PROFESSIONAL CRASH POINT CALCULATION
-  const crashPoint = generateProvablyFairCrashPoint(serverSeed, gameState.crash.gameCounter);
+  console.log(`🚀 Creating new crash game: ${gameId}`);
 
   gameState.crash.currentGame = {
     id: gameId,
@@ -1496,10 +1411,10 @@ async function startNewCrashGame() {
     result: null,
     createdAt: new Date(),
     nonce: gameState.crash.gameCounter,
-    crashPoint: crashPoint
+    crashPoint: generateProvablyFairCrashPoint(serverSeed, gameState.crash.gameCounter)
   };
 
-  console.log(`🚀 BULLETPROOF: Professional crash point calculated: ${crashPoint.toFixed(2)}x`);
+  console.log(`🚀 Crash point calculated: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
 
   let retryCount = 0;
   let dbSuccess = false;
@@ -1514,54 +1429,41 @@ async function startNewCrashGame() {
     
     if (!dbSuccess) {
       retryCount++;
-      console.log(`⚠️ BULLETPROOF: Crash game creation failed, retry ${retryCount}/3`);
+      console.log(`⚠️ Crash game creation failed, retry ${retryCount}/3`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
   if (!dbSuccess) {
-    console.error('❌ BULLETPROOF: Failed to save crash game to database after 3 retries');
+    console.error('❌ Failed to save crash game to database after 3 retries, retrying entire function...');
     gameState.crash.isProcessing = false;
     setTimeout(() => startNewCrashGame(), 2000);
     return;
   }
 
-  console.log(`🚀 BULLETPROOF: Broadcasting new crash game: ${gameId}`);
+  console.log(`🚀 Broadcasting new crash game to crash room: ${gameId}`);
   
-  // Safe broadcasts with delays
-  setTimeout(() => {
-    try {
-      io.to('crash-room').emit('new-crash-game', {
-        gameId,
-        hashedSeed,
-        phase: 'betting',
-        timeLeft: 25
-      });
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting new crash game:', error);
-    }
-  }, 100);
+  io.to('crash-room').emit('new-crash-game', {
+    gameId,
+    hashedSeed,
+    phase: 'betting',
+    timeLeft: 25
+  });
 
-  setTimeout(() => {
-    try {
-      io.to('crash-room').emit('crash-game-state', {
-        gameId,
-        hashedSeed,
-        phase: 'betting',
-        timeLeft: 25,
-        currentMultiplier: 1.00
-      });
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting crash game state:', error);
-    }
-  }, 200);
+  io.to('crash-room').emit('crash-game-state', {
+    gameId,
+    hashedSeed,
+    phase: 'betting',
+    timeLeft: 25,
+    currentMultiplier: 1.00
+  });
 
-  console.log(`🚀 BULLETPROOF: Game ${gameId} started - betting phase (25 seconds)`);
+  console.log(`🚀 Game ${gameId} started - betting phase (25 seconds)`);
 
-  // Professional betting countdown
+  // Start betting countdown with detailed logging like dice game
   gameState.crash.bettingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
-      console.log('🚀 BULLETPROOF: Game state changed, clearing betting interval');
+      console.log('🚀 Game state changed, clearing betting interval');
       clearInterval(gameState.crash.bettingInterval);
       gameState.crash.bettingInterval = null;
       return;
@@ -1569,28 +1471,24 @@ async function startNewCrashGame() {
 
     gameState.crash.currentGame.timeLeft--;
     
-    try {
-      io.to('crash-room').emit('crash-timer-update', gameState.crash.currentGame.timeLeft);
-      
-      if (gameState.crash.currentGame.timeLeft % 5 === 0) {
-        io.to('crash-room').emit('crash-game-state', {
-          gameId: gameState.crash.currentGame.id,
-          hashedSeed: gameState.crash.currentGame.hashedSeed,
-          phase: gameState.crash.currentGame.phase,
-          timeLeft: gameState.crash.currentGame.timeLeft,
-          currentMultiplier: gameState.crash.currentMultiplier
-        });
-      }
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting timer update:', error);
+    io.to('crash-room').emit('crash-timer-update', gameState.crash.currentGame.timeLeft);
+    
+    if (gameState.crash.currentGame.timeLeft % 5 === 0) {
+      io.to('crash-room').emit('crash-game-state', {
+        gameId: gameState.crash.currentGame.id,
+        hashedSeed: gameState.crash.currentGame.hashedSeed,
+        phase: gameState.crash.currentGame.phase,
+        timeLeft: gameState.crash.currentGame.timeLeft,
+        currentMultiplier: gameState.crash.currentMultiplier
+      });
     }
 
-    console.log(`🚀 BULLETPROOF: Game ${gameId} - betting phase: ${gameState.crash.currentGame.timeLeft}s remaining`);
+    console.log(`🚀 Game ${gameId} - betting phase: ${gameState.crash.currentGame.timeLeft}s remaining`);
 
     if (gameState.crash.currentGame.timeLeft <= 0) {
       clearInterval(gameState.crash.bettingInterval);
       gameState.crash.bettingInterval = null;
-      console.log(`🚀 BULLETPROOF: Game ${gameId} - betting phase ended, starting professional flight`);
+      console.log(`🚀 Game ${gameId} - betting phase ended, starting flying phase`);
       startCrashFlying();
     }
   }, 1000);
@@ -1598,90 +1496,80 @@ async function startNewCrashGame() {
 
 function startCrashFlying() {
   if (!gameState.crash.currentGame) {
-    console.error('🚀 BULLETPROOF: No current crash game to start flying');
+    console.error('🚀 No current crash game to start flying');
     gameState.crash.isProcessing = false;
     return;
   }
 
   const gameId = gameState.crash.currentGame.id;
-  const targetCrashPoint = gameState.crash.currentGame.crashPoint;
-  
-  console.log(`🚀 BULLETPROOF: Game ${gameId} - entering professional flying phase`);
-  console.log(`🚀 BULLETPROOF: Target crash point: ${targetCrashPoint.toFixed(2)}x`);
+  console.log(`🚀 Game ${gameId} - entering flying phase`);
+  console.log(`🚀 Game ${gameId} - target crash point: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
   
   gameState.crash.currentGame.phase = 'flying';
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = Date.now();
   gameState.crash.crashed = false;
 
-  // Safe broadcast of flight start
-  setTimeout(() => {
-    try {
-      io.to('crash-room').emit('crash-flying-start');
-      io.to('crash-room').emit('crash-game-state', {
-        gameId: gameState.crash.currentGame.id,
-        hashedSeed: gameState.crash.currentGame.hashedSeed,
-        phase: 'flying',
-        timeLeft: 0,
-        currentMultiplier: gameState.crash.currentMultiplier
-      });
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting flight start:', error);
-    }
-  }, 100);
+  io.to('crash-room').emit('crash-flying-start');
+  io.to('crash-room').emit('crash-game-state', {
+    gameId: gameState.crash.currentGame.id,
+    hashedSeed: gameState.crash.currentGame.hashedSeed,
+    phase: 'flying',
+    timeLeft: 0,
+    currentMultiplier: gameState.crash.currentMultiplier
+  });
 
-  console.log(`🚀 BULLETPROOF: Game ${gameId} - professional rocket launched!`);
+  console.log(`🚀 Game ${gameId} - rocket launched! Flying...`);
 
-  // PROFESSIONAL FLIGHT CALCULATION
+  // Flying phase with smooth multiplier updates
   gameState.crash.flyingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
-      console.log('🚀 BULLETPROOF: Game state changed, clearing flying interval');
+      console.log('🚀 Game state changed, clearing flying interval');
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
       return;
     }
 
     if (gameState.crash.crashed) {
-      console.log('🚀 BULLETPROOF: Already crashed, clearing flying interval');
+      console.log('🚀 Already crashed, clearing flying interval');
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
       return;
     }
 
     const elapsed = Date.now() - gameState.crash.startTime;
+    const timeInSeconds = elapsed / 1000;
     
-    // PROFESSIONAL MULTIPLIER CALCULATION
-    const newMultiplier = calculateFlightMultiplier(elapsed, targetCrashPoint);
-    gameState.crash.currentMultiplier = newMultiplier;
+    // Smooth multiplier calculation with acceleration
+    let newMultiplier = 1.00 + (timeInSeconds * 0.15) + (timeInSeconds * timeInSeconds * 0.008);
+    
+    // Ensure consistent increments
+    newMultiplier = Math.max(newMultiplier, gameState.crash.currentMultiplier + 0.01);
+    gameState.crash.currentMultiplier = Math.round(newMultiplier * 100) / 100;
 
-    // Safe broadcast of multiplier update
-    try {
-      io.to('crash-room').emit('crash-multiplier-update', {
-        currentMultiplier: gameState.crash.currentMultiplier
-      });
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting multiplier update:', error);
-    }
+    // Broadcast multiplier update
+    io.to('crash-room').emit('crash-multiplier-update', {
+      currentMultiplier: gameState.crash.currentMultiplier
+    });
 
-    // Professional logging every 500ms
+    // Log every 0.5 seconds for visibility
     if (Math.floor(elapsed / 500) !== Math.floor((elapsed - 50) / 500)) {
-      console.log(`🚀 BULLETPROOF: Game ${gameId} - flying: ${gameState.crash.currentMultiplier.toFixed(2)}x (target: ${targetCrashPoint.toFixed(2)}x)`);
+      console.log(`🚀 Game ${gameId} - flying: ${gameState.crash.currentMultiplier.toFixed(2)}x (target: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x)`);
     }
 
-    // Check if reached crash point
-    if (gameState.crash.currentMultiplier >= targetCrashPoint) {
+    // Check if we've reached crash point
+    if (gameState.crash.currentMultiplier >= gameState.crash.currentGame.crashPoint) {
       gameState.crash.crashed = true;
-      gameState.crash.currentMultiplier = targetCrashPoint; // Set exact crash point
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
-      console.log(`🚀 BULLETPROOF: Game ${gameId} - CRASHED at exactly ${targetCrashPoint.toFixed(2)}x!`);
+      console.log(`🚀 Game ${gameId} - CRASHED at ${gameState.crash.currentMultiplier.toFixed(2)}x!`);
       completeCrashGame();
       return;
     }
 
-    // Safety timeout after 3 minutes
-    if (elapsed > 180000) {
-      console.log(`🚀 BULLETPROOF: Game ${gameId} - Safety timeout reached, forcing crash`);
+    // Safety timeout after 2 minutes
+    if (elapsed > 120000) {
+      console.log(`🚀 Game ${gameId} - Safety timeout reached, forcing crash`);
       gameState.crash.crashed = true;
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
@@ -1689,21 +1577,20 @@ function startCrashFlying() {
       return;
     }
 
-  }, 50); // 20 FPS for professional smooth experience
+  }, 50); // 20 FPS for smooth experience
 }
 
 async function completeCrashGame() {
   if (!gameState.crash.currentGame) {
-    console.error('🚀 BULLETPROOF: No current crash game to complete');
+    console.error('🚀 No current crash game to complete');
     gameState.crash.isProcessing = false;
     return;
   }
 
   const gameId = gameState.crash.currentGame.id;
   const finalCrashPoint = gameState.crash.currentMultiplier;
-  
-  console.log(`🚀 BULLETPROOF: Game ${gameId} - completing professional crash game`);
-  console.log(`🚀 BULLETPROOF: Final crash point: ${finalCrashPoint.toFixed(2)}x`);
+  console.log(`🚀 Game ${gameId} - completing game`);
+  console.log(`🚀 Game ${gameId} - final crash point: ${finalCrashPoint.toFixed(2)}x`);
 
   gameState.crash.currentGame.phase = 'crashed';
   gameState.crash.currentGame.crashedAt = Date.now();
@@ -1714,7 +1601,7 @@ async function completeCrashGame() {
   let totalWagered = 0;
   let totalPayout = 0;
 
-  console.log(`🚀 BULLETPROOF: Processing ${gameState.crash.players.size} bets for crash game ${gameId}`);
+  console.log(`🚀 Processing ${gameState.crash.players.size} bets for crash game ${gameId}`);
 
   const dbOperations = [];
 
@@ -1729,7 +1616,7 @@ async function completeCrashGame() {
         payout: player.payout
       });
       
-      console.log(`🏆 BULLETPROOF: Winner: ${player.username} cashed out at ${player.cashOutAt.toFixed(2)}x for ${player.payout.toFixed(2)} USDC`);
+      console.log(`🏆 Winner: ${player.username} cashed out at ${player.cashOutAt.toFixed(2)}x for ${player.payout.toFixed(2)} USDC`);
     } else if (!player.isCashedOut) {
       // Player didn't cash out, lost their bet
       losers.push(player);
@@ -1739,22 +1626,22 @@ async function completeCrashGame() {
         safeCrashDatabase('updateBetResult', player.betId, false, 0)
       );
       
-      console.log(`😔 BULLETPROOF: Loser: ${player.username} lost ${player.amount} USDC (didn't cash out)`);
+      console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (didn't cash out)`);
     } else {
-      // Player tried to cash out too late
+      // Player tried to cash out after crash (shouldn't happen, but safety check)
       losers.push(player);
-      console.log(`😔 BULLETPROOF: Loser: ${player.username} lost ${player.amount} USDC (cashed out too late)`);
+      console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (cashed out too late)`);
     }
   }
 
-  console.log(`🚀 BULLETPROOF: Executing ${dbOperations.length} database operations...`);
+  console.log(`🚀 Executing ${dbOperations.length} database operations in parallel...`);
   const startTime = Date.now();
   
   try {
     await Promise.all(dbOperations);
-    console.log(`✅ BULLETPROOF: All crash database operations completed in ${Date.now() - startTime}ms`);
+    console.log(`✅ All crash database operations completed in ${Date.now() - startTime}ms`);
   } catch (error) {
-    console.error('❌ BULLETPROOF: Error in crash database operations:', error);
+    console.error('❌ Error in crash database operations:', error);
   }
 
   const gameResult = {
@@ -1778,7 +1665,7 @@ async function completeCrashGame() {
       playersCount: gameState.crash.players.size
     });
   } catch (error) {
-    console.error('❌ BULLETPROOF: Error completing crash game in database:', error);
+    console.error(`❌ Error completing crash game in database:`, error);
   }
 
   gameState.crash.history.unshift(gameResult);
@@ -1786,48 +1673,45 @@ async function completeCrashGame() {
     gameState.crash.history = gameState.crash.history.slice(0, 20);
   }
 
-  console.log(`🚀 BULLETPROOF: Game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
+  console.log(`🚀 Game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
 
-  // Safe broadcast of results
-  setTimeout(() => {
-    try {
-      io.to('crash-room').emit('crash-result', gameResult);
-      
-      io.to('crash-room').emit('crash-game-state', {
-        gameId: gameId,
-        hashedSeed: gameState.crash.currentGame.hashedSeed,
-        phase: 'crashed',
-        timeLeft: 0,
-        currentMultiplier: finalCrashPoint,
-        result: {
-          crashPoint: finalCrashPoint,
-          serverSeed: gameState.crash.currentGame.serverSeed,
-          winners,
-          losers
-        }
-      });
-    } catch (error) {
-      console.error('❌ BULLETPROOF: Error broadcasting crash game results:', error);
-    }
-  }, 100);
+  try {
+    io.to('crash-room').emit('crash-result', gameResult);
+    
+    io.to('crash-room').emit('crash-game-state', {
+      gameId: gameId,
+      hashedSeed: gameState.crash.currentGame.hashedSeed,
+      phase: 'crashed',
+      timeLeft: 0,
+      currentMultiplier: finalCrashPoint,
+      result: {
+        crashPoint: finalCrashPoint,
+        serverSeed: gameState.crash.currentGame.serverSeed,
+        winners,
+        losers
+      }
+    });
+  } catch (error) {
+    console.error(`❌ Error broadcasting crash game results:`, error);
+  }
 
-  console.log(`🚀 BULLETPROOF: Game ${gameId} - all results broadcast successfully`);
+  console.log(`🚀 Game ${gameId} - all results broadcast`);
 
   gameState.crash.isProcessing = false;
   
   setTimeout(() => {
-    console.log(`🚀 BULLETPROOF: Starting next professional crash game after completion of ${gameId}`);
+    console.log(`🚀 Starting next crash game immediately after completion of ${gameId}`);
     startNewCrashGame();
   }, 3000);
 }
 
 // Start the server
 httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 BULLETPROOF: Professional Socket.IO server running on port ${port}`);
-  console.log(`🌐 BULLETPROOF: CORS enabled for Vercel domains`);
-  console.log(`💾 BULLETPROOF: Database connection: ${UserDatabase && DiceDatabase && CrashDatabase ? 'Connected' : 'Mock mode'}`);
+  console.log(`🚀 Socket.IO server running on port ${port}`);
+  console.log(`🌐 CORS enabled for Vercel domains`);
+  console.log(`💾 Database connection: ${UserDatabase && DiceDatabase && CrashDatabase ? 'Connected' : 'Mock mode'}`);
   
-  // Start both professional game loops
+  // Start both game loops
   startDiceGameLoop();
   startCrashGameLoop();
 });
