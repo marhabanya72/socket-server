@@ -1,5 +1,5 @@
 // /Users/macbook/Documents/n1verse/server.js
-// Complete Socket.IO server for Railway deployment - WITH FIXED CRASH GAME
+// Complete Socket.IO server for Railway deployment - WITH COMPLETELY FIXED CRASH GAME
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -191,7 +191,7 @@ try {
     }
   };
 
-  // FIXED: Crash Database functions
+  // Crash Database functions
   CrashDatabase = {
     createGame: async (gameData) => {
       let connection;
@@ -321,7 +321,7 @@ try {
     }
   };
 
-  // RPS Database functions (unchanged)
+  // RPS Database functions
   RPSDatabase = {
     createLobby: async (lobbyData) => {
       let connection;
@@ -425,7 +425,6 @@ async function safeDiceDatabase(functionName, ...args) {
   }
 }
 
-// FIXED: Safe crash database wrapper
 async function safeCrashDatabase(functionName, ...args) {
   try {
     if (CrashDatabase && typeof CrashDatabase[functionName] === 'function') {
@@ -453,7 +452,6 @@ const gameState = {
     rollingTimeout: null,
     isProcessing: false
   },
-  // FIXED: Crash game state
   crash: {
     currentGame: null,
     history: [],
@@ -463,7 +461,8 @@ const gameState = {
     flyingInterval: null,
     isProcessing: false,
     currentMultiplier: 1.00,
-    startTime: null
+    startTime: null,
+    crashed: false
   },
   rps: {
     lobbies: new Map(),
@@ -482,7 +481,6 @@ function generateGameId() {
   return `dice_${Date.now()}_${gameState.dice.gameCounter}`;
 }
 
-// FIXED: Crash game ID generator
 function generateCrashGameId() {
   gameState.crash.gameCounter++;
   return `crash_${Date.now()}_${gameState.crash.gameCounter}`;
@@ -517,39 +515,33 @@ function generateProvablyFairDiceResult(serverSeed, nonce) {
   };
 }
 
-// FIXED: Provably fair crash point calculation
 function generateProvablyFairCrashPoint(serverSeed, nonce) {
   const crypto = require('crypto');
   const hmac = crypto.createHmac('sha256', serverSeed);
   hmac.update(`${nonce}:crash`);
   const hash = hmac.digest('hex');
   
-  // Use first 8 characters for higher precision
   const hexSubstring = hash.substring(0, 8);
   const H = parseInt(hexSubstring, 16);
-  
-  // Calculate lucky number (0 to 999,999)
   const luckyNumber = H % 1000000;
   
   let crashPoint;
   
-  // Handle instant crash (3% chance at 1.00x)
-  if (luckyNumber < 30000) { // 30000 is 3% of 1,000,000
-    crashPoint = 100; // Represents 1.00x
+  if (luckyNumber < 30000) {
+    crashPoint = 100;
   } else {
-    // Core calculation: (97 * 1000000) / (1000000 - luckyNumber)
     crashPoint = (97 * 1000000) / (1000000 - luckyNumber);
   }
   
-  // Clean up the number to be a multiplier
   const multiplier = Math.floor(crashPoint) / 100;
-  
-  // Ensure minimum of 1.00x and reasonable maximum
   return Math.max(1.00, Math.min(multiplier, 50000.00));
 }
 
 // Clear all timers and intervals
 function clearGameTimers() {
+  console.log('🧹 Starting complete game cleanup...');
+  
+  // Clear dice timers
   if (gameState.dice.bettingInterval) {
     clearInterval(gameState.dice.bettingInterval);
     gameState.dice.bettingInterval = null;
@@ -559,7 +551,7 @@ function clearGameTimers() {
     gameState.dice.rollingTimeout = null;
   }
   
-  // FIXED: Clear crash game timers
+  // Clear crash timers
   if (gameState.crash.bettingInterval) {
     clearInterval(gameState.crash.bettingInterval);
     gameState.crash.bettingInterval = null;
@@ -574,18 +566,14 @@ function clearGameTimers() {
 
 // Complete game cleanup
 function cleanupGameState() {
-  console.log('🧹 Starting complete game cleanup...');
-  
-  clearGameTimers();
-  
   const connectedDiceSockets = Array.from(gameState.dice.players.keys());
   gameState.dice.players.clear();
   
-  // FIXED: Clear crash game players
   const connectedCrashSockets = Array.from(gameState.crash.players.keys());
   gameState.crash.players.clear();
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = null;
+  gameState.crash.crashed = false;
   
   console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players and ${connectedCrashSockets.length} crash players`);
   console.log('🧹 Game cleanup complete');
@@ -600,7 +588,7 @@ io.on('connection', (socket) => {
     socket.userData = userData;
   });
 
-  // Dice Game Events (unchanged from working version)
+  // Dice Game Events (working version - unchanged)
   socket.on('join-dice', (userData) => {
     console.log(`🎲 User joining dice room: ${userData?.username} (${socket.id})`);
     socket.join('dice-room');
@@ -709,7 +697,7 @@ io.on('connection', (socket) => {
     console.log(`🎲 Player count for game ${gameState.dice.currentGame.id}: ${gameState.dice.players.size}`);
   });
 
-  // FIXED: Crash Game Events
+  // COMPLETELY REWRITTEN CRASH GAME EVENTS - MODELED AFTER WORKING DICE GAME
   socket.on('join-crash', (userData) => {
     console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
     socket.join('crash-room');
@@ -836,6 +824,12 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (gameState.crash.crashed) {
+      console.log(`🚀 Cash out rejected - rocket already crashed`);
+      socket.emit('crash-cash-out-error', 'Too late! Rocket already crashed');
+      return;
+    }
+
     const player = gameState.crash.players.get(socket.id);
     if (!player) {
       console.log(`🚀 Cash out rejected - player not found`);
@@ -865,7 +859,7 @@ io.on('connection', (socket) => {
       await safeUpdateUserStats(player.userId, player.amount, payout);
     }
 
-    console.log(`✅ Cash out successful for ${player.username}: ${payout} USDC at ${currentMultiplier}x`);
+    console.log(`✅ Cash out successful for ${player.username}: ${payout.toFixed(2)} USDC at ${currentMultiplier.toFixed(2)}x`);
 
     // Notify all players about the cash out
     io.to('crash-room').emit('crash-player-cashed-out', {
@@ -900,7 +894,7 @@ io.on('connection', (socket) => {
       });
     }
     
-    // FIXED: Clean up crash game
+    // Clean up crash game
     if (gameState.crash.players.has(socket.id)) {
       const player = gameState.crash.players.get(socket.id);
       gameState.crash.players.delete(socket.id);
@@ -931,7 +925,7 @@ async function startNewDiceGame() {
   gameState.dice.isProcessing = true;
   console.log('🎲 Starting new dice game...');
   
-  cleanupGameState();
+  clearGameTimers();
   
   const gameId = generateGameId();
   const serverSeed = generateServerSeed();
@@ -1203,7 +1197,7 @@ async function completeDiceGame() {
   }, 2000);
 }
 
-// FIXED: CRASH GAME FUNCTIONS
+// COMPLETELY REWRITTEN CRASH GAME FUNCTIONS - MODELED AFTER WORKING DICE GAME
 function startCrashGameLoop() {
   console.log('🚀 Starting crash game loop...');
   startNewCrashGame();
@@ -1218,13 +1212,7 @@ async function startNewCrashGame() {
   gameState.crash.isProcessing = true;
   console.log('🚀 Starting new crash game...');
   
-  // Clear previous game state
-  const connectedCrashSockets = Array.from(gameState.crash.players.keys());
-  gameState.crash.players.clear();
-  gameState.crash.currentMultiplier = 1.00;
-  gameState.crash.startTime = null;
-  
-  // FIXED: Clear intervals properly
+  // Clear previous game state completely
   if (gameState.crash.bettingInterval) {
     clearInterval(gameState.crash.bettingInterval);
     gameState.crash.bettingInterval = null;
@@ -1234,15 +1222,16 @@ async function startNewCrashGame() {
     gameState.crash.flyingInterval = null;
   }
   
+  gameState.crash.players.clear();
+  gameState.crash.currentMultiplier = 1.00;
+  gameState.crash.startTime = null;
+  gameState.crash.crashed = false;
+  
   const gameId = generateCrashGameId();
   const serverSeed = generateServerSeed();
   const hashedSeed = generateHash(serverSeed);
 
   console.log(`🚀 Creating new crash game: ${gameId}`);
-
-  // Calculate crash point using provably fair algorithm
-  const crashPoint = generateProvablyFairCrashPoint(serverSeed, gameState.crash.gameCounter);
-  console.log(`🚀 Crash point calculated: ${crashPoint}x`);
 
   gameState.crash.currentGame = {
     id: gameId,
@@ -1253,8 +1242,10 @@ async function startNewCrashGame() {
     result: null,
     createdAt: new Date(),
     nonce: gameState.crash.gameCounter,
-    crashPoint: crashPoint
+    crashPoint: generateProvablyFairCrashPoint(serverSeed, gameState.crash.gameCounter)
   };
+
+  console.log(`🚀 Crash point calculated: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
 
   let retryCount = 0;
   let dbSuccess = false;
@@ -1298,12 +1289,12 @@ async function startNewCrashGame() {
     currentMultiplier: 1.00
   });
 
-  console.log(`🚀 Crash game ${gameId} started - betting phase (25 seconds)`);
+  console.log(`🚀 Game ${gameId} started - betting phase (25 seconds)`);
 
-  // FIXED: Proper timer interval that decrements correctly
+  // Start betting countdown with detailed logging like dice game
   gameState.crash.bettingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
-      console.log('🚀 Crash game state changed, clearing betting interval');
+      console.log('🚀 Game state changed, clearing betting interval');
       clearInterval(gameState.crash.bettingInterval);
       gameState.crash.bettingInterval = null;
       return;
@@ -1311,13 +1302,9 @@ async function startNewCrashGame() {
 
     gameState.crash.currentGame.timeLeft--;
     
-    console.log(`🚀 Crash game ${gameId} - betting phase: ${gameState.crash.currentGame.timeLeft}s remaining`);
-    
-    // FIXED: Send timer updates to all clients
     io.to('crash-room').emit('crash-timer-update', gameState.crash.currentGame.timeLeft);
     
-    // FIXED: Send game state updates every few seconds
-    if (gameState.crash.currentGame.timeLeft % 5 === 0 || gameState.crash.currentGame.timeLeft <= 5) {
+    if (gameState.crash.currentGame.timeLeft % 5 === 0) {
       io.to('crash-room').emit('crash-game-state', {
         gameId: gameState.crash.currentGame.id,
         hashedSeed: gameState.crash.currentGame.hashedSeed,
@@ -1327,13 +1314,15 @@ async function startNewCrashGame() {
       });
     }
 
+    console.log(`🚀 Game ${gameId} - betting phase: ${gameState.crash.currentGame.timeLeft}s remaining`);
+
     if (gameState.crash.currentGame.timeLeft <= 0) {
       clearInterval(gameState.crash.bettingInterval);
       gameState.crash.bettingInterval = null;
-      console.log(`🚀 Crash game ${gameId} - betting phase ended, starting flying phase`);
+      console.log(`🚀 Game ${gameId} - betting phase ended, starting flying phase`);
       startCrashFlying();
     }
-  }, 1000); // FIXED: Make sure interval is exactly 1 second
+  }, 1000);
 }
 
 function startCrashFlying() {
@@ -1344,13 +1333,14 @@ function startCrashFlying() {
   }
 
   const gameId = gameState.crash.currentGame.id;
-  console.log(`🚀 Crash game ${gameId} - entering flying phase`);
+  console.log(`🚀 Game ${gameId} - entering flying phase`);
+  console.log(`🚀 Game ${gameId} - target crash point: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
   
   gameState.crash.currentGame.phase = 'flying';
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = Date.now();
+  gameState.crash.crashed = false;
 
-  // Broadcast flying start
   io.to('crash-room').emit('crash-flying-start');
   io.to('crash-room').emit('crash-game-state', {
     gameId: gameState.crash.currentGame.id,
@@ -1360,55 +1350,65 @@ function startCrashFlying() {
     currentMultiplier: gameState.crash.currentMultiplier
   });
 
-  console.log(`🚀 Crash game ${gameId} - rocket launched! Target crash: ${gameState.crash.currentGame.crashPoint}x`);
+  console.log(`🚀 Game ${gameId} - rocket launched! Flying...`);
 
-  // FIXED: Flying phase with dynamic multiplier updates
+  // Flying phase with smooth multiplier updates
   gameState.crash.flyingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
-      console.log('🚀 Crash game state changed, clearing flying interval');
+      console.log('🚀 Game state changed, clearing flying interval');
+      clearInterval(gameState.crash.flyingInterval);
+      gameState.crash.flyingInterval = null;
+      return;
+    }
+
+    if (gameState.crash.crashed) {
+      console.log('🚀 Already crashed, clearing flying interval');
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
       return;
     }
 
     const elapsed = Date.now() - gameState.crash.startTime;
-    
-    // FIXED: Calculate multiplier based on elapsed time with acceleration
     const timeInSeconds = elapsed / 1000;
-    let newMultiplier = 1.00 + (timeInSeconds * 0.2) + (timeInSeconds * timeInSeconds * 0.01);
     
-    // Add some randomness for more exciting flight
-    const variance = Math.sin(timeInSeconds * 2) * 0.01;
-    newMultiplier += variance;
+    // Smooth multiplier calculation with acceleration
+    let newMultiplier = 1.00 + (timeInSeconds * 0.15) + (timeInSeconds * timeInSeconds * 0.008);
     
-    // Ensure minimum increment of 0.001x
-    newMultiplier = Math.max(newMultiplier, gameState.crash.currentMultiplier + 0.001);
-    
-    gameState.crash.currentMultiplier = Math.round(newMultiplier * 1000) / 1000; // Round to 3 decimal places
+    // Ensure consistent increments
+    newMultiplier = Math.max(newMultiplier, gameState.crash.currentMultiplier + 0.01);
+    gameState.crash.currentMultiplier = Math.round(newMultiplier * 100) / 100;
 
-    // FIXED: Broadcast multiplier update
+    // Broadcast multiplier update
     io.to('crash-room').emit('crash-multiplier-update', {
-      currentMultiplier: gameState.crash.currentMultiplier,
-      timestamp: Date.now()
+      currentMultiplier: gameState.crash.currentMultiplier
     });
 
-    // FIXED: Check if we've reached crash point
+    // Log every 0.5 seconds for visibility
+    if (Math.floor(elapsed / 500) !== Math.floor((elapsed - 50) / 500)) {
+      console.log(`🚀 Game ${gameId} - flying: ${gameState.crash.currentMultiplier.toFixed(2)}x (target: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x)`);
+    }
+
+    // Check if we've reached crash point
     if (gameState.crash.currentMultiplier >= gameState.crash.currentGame.crashPoint) {
+      gameState.crash.crashed = true;
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
-      console.log(`🚀 Crash game ${gameId} - CRASHED at ${gameState.crash.currentMultiplier}x!`);
+      console.log(`🚀 Game ${gameId} - CRASHED at ${gameState.crash.currentMultiplier.toFixed(2)}x!`);
       completeCrashGame();
+      return;
     }
 
     // Safety timeout after 2 minutes
     if (elapsed > 120000) {
-      console.log(`🚀 Crash game ${gameId} - Safety timeout reached, forcing crash`);
+      console.log(`🚀 Game ${gameId} - Safety timeout reached, forcing crash`);
+      gameState.crash.crashed = true;
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
       completeCrashGame();
+      return;
     }
 
-  }, 50); // Update every 50ms for smooth experience
+  }, 50); // 20 FPS for smooth experience
 }
 
 async function completeCrashGame() {
@@ -1420,10 +1420,12 @@ async function completeCrashGame() {
 
   const gameId = gameState.crash.currentGame.id;
   const finalCrashPoint = gameState.crash.currentMultiplier;
-  console.log(`🚀 Crash game ${gameId} - completing game at ${finalCrashPoint}x`);
+  console.log(`🚀 Game ${gameId} - completing game`);
+  console.log(`🚀 Game ${gameId} - final crash point: ${finalCrashPoint.toFixed(2)}x`);
 
   gameState.crash.currentGame.phase = 'crashed';
   gameState.crash.currentGame.crashedAt = Date.now();
+  gameState.crash.crashed = true;
 
   const winners = [];
   const losers = [];
@@ -1437,14 +1439,15 @@ async function completeCrashGame() {
   for (const [socketId, player] of gameState.crash.players.entries()) {
     totalWagered += player.amount;
     
-    if (player.isCashedOut && player.cashOutAt < finalCrashPoint) {
+    if (player.isCashedOut && player.cashOutAt <= finalCrashPoint) {
       // Player successfully cashed out before crash
+      totalPayout += player.payout;
       winners.push({
         ...player,
         payout: player.payout
       });
       
-      console.log(`🏆 Winner: ${player.username} cashed out at ${player.cashOutAt}x for ${player.payout} USDC`);
+      console.log(`🏆 Winner: ${player.username} cashed out at ${player.cashOutAt.toFixed(2)}x for ${player.payout.toFixed(2)} USDC`);
     } else if (!player.isCashedOut) {
       // Player didn't cash out, lost their bet
       losers.push(player);
@@ -1455,10 +1458,14 @@ async function completeCrashGame() {
       );
       
       console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (didn't cash out)`);
+    } else {
+      // Player tried to cash out after crash (shouldn't happen, but safety check)
+      losers.push(player);
+      console.log(`😔 Loser: ${player.username} lost ${player.amount} USDC (cashed out too late)`);
     }
   }
 
-  console.log(`🚀 Executing ${dbOperations.length} database operations for crash game...`);
+  console.log(`🚀 Executing ${dbOperations.length} database operations in parallel...`);
   const startTime = Date.now();
   
   try {
@@ -1467,9 +1474,6 @@ async function completeCrashGame() {
   } catch (error) {
     console.error('❌ Error in crash database operations:', error);
   }
-
-  // Calculate total payout from winners
-  totalPayout = winners.reduce((sum, winner) => sum + winner.payout, 0);
 
   const gameResult = {
     gameId: gameId,
@@ -1500,7 +1504,7 @@ async function completeCrashGame() {
     gameState.crash.history = gameState.crash.history.slice(0, 20);
   }
 
-  console.log(`🚀 Crash game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
+  console.log(`🚀 Game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
 
   try {
     io.to('crash-room').emit('crash-result', gameResult);
@@ -1522,13 +1526,12 @@ async function completeCrashGame() {
     console.error(`❌ Error broadcasting crash game results:`, error);
   }
 
-  console.log(`🚀 Crash game ${gameId} - all results broadcast`);
+  console.log(`🚀 Game ${gameId} - all results broadcast`);
 
   gameState.crash.isProcessing = false;
   
-  // Start next crash game after 3 seconds
   setTimeout(() => {
-    console.log(`🚀 Starting next crash game after completion of ${gameId}`);
+    console.log(`🚀 Starting next crash game immediately after completion of ${gameId}`);
     startNewCrashGame();
   }, 3000);
 }
@@ -1541,7 +1544,7 @@ httpServer.listen(port, '0.0.0.0', () => {
   
   // Start both game loops
   startDiceGameLoop();
-  startCrashGameLoop(); // FIXED: Start crash game loop
+  startCrashGameLoop();
 });
 
 // Graceful shutdown
