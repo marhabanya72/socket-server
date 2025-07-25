@@ -758,7 +758,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // COMPLETELY REWRITTEN CRASH GAME EVENTS - MODELED AFTER WORKING DICE GAME
+  // FIXED CRASH GAME EVENTS
   socket.on('join-crash', (userData) => {
     console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
     socket.join('crash-room');
@@ -784,72 +784,144 @@ io.on('connection', (socket) => {
       console.log('🚀 No current crash game, will start one soon');
     }
 
+    // Send current players list (including any existing bet from this user)
     const currentPlayers = Array.from(gameState.crash.players.values());
     if (currentPlayers.length > 0) {
       socket.emit('crash-players-list', currentPlayers);
+      
+      // Check if this user already has a bet
+      const existingBet = currentPlayers.find(p => p.userId === userData?.id);
+      if (existingBet) {
+        console.log(`🚀 Found existing bet for ${userData?.username}:`, existingBet);
+      }
     }
   });
 
-  // SIMPLIFIED crash bet handler to avoid disconnection issues
-  socket.on('place-crash-bet-simple', async (betData) => {
+  // FIXED: Changed from 'place-crash-bet-simple' to 'place-crash-bet'
+  socket.on('place-crash-bet', async (betData) => {
     try {
-      console.log(`🚀 SIMPLE: Crash bet received from ${betData.username}`);
+      console.log(`🚀 Crash bet received from ${betData.username}:`, betData);
 
-      // Basic validation only
-      if (!gameState.crash.currentGame || gameState.crash.currentGame.phase !== 'betting') {
-        console.log(`🚀 SIMPLE: Bet rejected - game not in betting phase`);
+      if (!gameState.crash.currentGame) {
+        console.log(`🚀 Bet rejected - no current crash game`);
+        socket.emit('crash-bet-error', 'No active crash game found');
+        return;
+      }
+
+      if (gameState.crash.currentGame.phase !== 'betting') {
+        console.log(`🚀 Bet rejected - invalid game phase: ${gameState.crash.currentGame.phase}`);
+        socket.emit('crash-bet-error', 'Betting is not currently open');
         return;
       }
 
       // Check if user already has a bet
+      let userAlreadyBet = false;
       for (const [socketId, player] of gameState.crash.players.entries()) {
         if (player.userId === betData.userId) {
-          console.log(`🚀 SIMPLE: User already has bet`);
+          userAlreadyBet = true;
+          console.log(`🚀 Bet rejected - user ${betData.username} already placed bet`);
+          socket.emit('crash-bet-error', 'You have already placed a bet for this round');
           return;
         }
       }
 
-      const crypto = require('crypto');
-      const betId = crypto.randomUUID();
-      
-      console.log(`🚀 SIMPLE: Saving to database...`);
-      
-      // Save to database
-      const dbSuccess = await safeCrashDatabase('placeBet', {
-        id: betId,
-        gameId: gameState.crash.currentGame.id,
-        userId: betData.userId,
-        amount: Number(betData.amount)
-      });
-
-      if (dbSuccess) {
-        console.log(`🚀 SIMPLE: Database save successful`);
-        
-        // Add to game state
-        const playerBet = {
-          userId: betData.userId,
-          username: betData.username,
-          amount: Number(betData.amount),
-          socketId: socket.id,
-          betId: betId,
-          isCashedOut: false,
-          profilePicture: '/default-avatar.png'
-        };
-        
-        gameState.crash.players.set(socket.id, playerBet);
-        console.log(`🚀 SIMPLE: Added to game state. Players: ${gameState.crash.players.size}`);
-        
-        // Just log success, no socket emissions to avoid disconnection
-        console.log(`✅ SIMPLE: Bet placed successfully!`);
-      } else {
-        console.log(`🚀 SIMPLE: Database save failed`);
+      // Validate bet data
+      if (!betData.userId || !betData.username || !betData.amount) {
+        console.log(`🚀 Bet rejected - missing required data:`, betData);
+        socket.emit('crash-bet-error', 'Invalid bet data - missing required fields');
+        return;
       }
 
+      // Validate bet amount
+      const betAmount = Number(betData.amount);
+      if (isNaN(betAmount) || betAmount <= 0 || betAmount > 10000) {
+        console.log(`🚀 Bet rejected - invalid amount: ${betAmount}`);
+        socket.emit('crash-bet-error', 'Invalid bet amount');
+        return;
+      }
+
+      const crypto = require('crypto');
+      const betId = crypto.randomUUID();
+      console.log(`🚀 Attempting to save crash bet to database: ${betId}`);
+
+      const playerBet = {
+        userId: betData.userId,
+        username: betData.username,
+        amount: betAmount,
+        socketId: socket.id,
+        profilePicture: betData.profilePicture || socket.userData?.profilePicture || '/default-avatar.png',
+        timestamp: new Date(),
+        gameId: gameState.crash.currentGame.id,
+        betId: betId,
+        isCashedOut: false,
+        cashOutAt: null,
+        payout: 0
+      };
+      
+      // Try to save to database with error handling
+      let dbSuccess = false;
+      try {
+        dbSuccess = await safeCrashDatabase('placeBet', {
+          id: betId,
+          gameId: gameState.crash.currentGame.id,
+          userId: betData.userId,
+          amount: betAmount
+        });
+      } catch (dbError) {
+        console.error(`❌ Database error during crash bet placement:`, dbError);
+        socket.emit('crash-bet-error', 'Database error - please try again');
+        return;
+      }
+
+      if (!dbSuccess) {
+        console.log(`🚀 Bet rejected - database save failed`);
+        socket.emit('crash-bet-error', 'Failed to save bet to database - try again');
+        return;
+      }
+
+      // Add player to game state
+      gameState.crash.players.set(socket.id, playerBet);
+
+      console.log(`✅ Crash bet placed successfully for ${betData.username}: ${betAmount} USDC`);
+
+      const playerJoinedData = {
+        playerId: socket.id,
+        userId: betData.userId,
+        username: betData.username,
+        amount: betAmount,
+        profilePicture: playerBet.profilePicture,
+        isCashedOut: false
+      };
+
+      // Broadcast to all players
+      try {
+        io.to('crash-room').emit('crash-player-joined', playerJoinedData);
+      } catch (broadcastError) {
+        console.error(`❌ Error broadcasting crash player joined:`, broadcastError);
+      }
+
+      // Confirm to player
+      try {
+        socket.emit('crash-bet-placed-confirmation', {
+          success: true,
+          bet: playerBet,
+          message: `Crash bet placed: ${betAmount} USDC - Cash out before it crashes!`
+        });
+      } catch (confirmError) {
+        console.error(`❌ Error sending crash bet confirmation:`, confirmError);
+      }
+
+      console.log(`🚀 Player count for crash game ${gameState.crash.currentGame.id}: ${gameState.crash.players.size}`);
+
     } catch (error) {
-      console.error(`❌ SIMPLE: Error:`, error.message);
+      console.error(`❌ Unhandled error in place-crash-bet:`, error);
+      try {
+        socket.emit('crash-bet-error', 'An unexpected error occurred - please try again');
+      } catch (emitError) {
+        console.error(`❌ Failed to emit crash bet error message:`, emitError);
+      }
     }
   });
-
 
   socket.on('crash-cash-out', async (cashOutData) => {
     try {
