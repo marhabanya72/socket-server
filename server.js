@@ -537,11 +537,8 @@ function generateProvablyFairCrashPoint(serverSeed, nonce) {
   return Math.max(1.00, Math.min(multiplier, 50000.00));
 }
 
-// Clear all timers and intervals
-function clearGameTimers() {
-  console.log('🧹 Starting complete game cleanup...');
-  
-  // Clear dice timers
+// Clear dice game timers only
+function clearDiceTimers() {
   if (gameState.dice.bettingInterval) {
     clearInterval(gameState.dice.bettingInterval);
     gameState.dice.bettingInterval = null;
@@ -550,8 +547,11 @@ function clearGameTimers() {
     clearTimeout(gameState.dice.rollingTimeout);
     gameState.dice.rollingTimeout = null;
   }
-  
-  // Clear crash timers
+  console.log('🧹 Dice timers cleared');
+}
+
+// Clear crash game timers only
+function clearCrashTimers() {
   if (gameState.crash.bettingInterval) {
     clearInterval(gameState.crash.bettingInterval);
     gameState.crash.bettingInterval = null;
@@ -560,23 +560,32 @@ function clearGameTimers() {
     clearInterval(gameState.crash.flyingInterval);
     gameState.crash.flyingInterval = null;
   }
-  
+  console.log('🧹 Crash timers cleared');
+}
+
+// Clear all timers and intervals (for shutdown)
+function clearAllGameTimers() {
+  console.log('🧹 Starting complete game cleanup...');
+  clearDiceTimers();
+  clearCrashTimers();
   console.log('🧹 All game timers cleared');
 }
 
-// Complete game cleanup
-function cleanupGameState() {
+// Complete dice game cleanup
+function cleanupDiceState() {
   const connectedDiceSockets = Array.from(gameState.dice.players.keys());
   gameState.dice.players.clear();
-  
+  console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players`);
+}
+
+// Complete crash game cleanup
+function cleanupCrashState() {
   const connectedCrashSockets = Array.from(gameState.crash.players.keys());
   gameState.crash.players.clear();
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = null;
   gameState.crash.crashed = false;
-  
-  console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players and ${connectedCrashSockets.length} crash players`);
-  console.log('🧹 Game cleanup complete');
+  console.log(`🧹 Cleared ${connectedCrashSockets.length} crash players`);
 }
 
 // Socket.IO event handlers
@@ -925,7 +934,9 @@ async function startNewDiceGame() {
   gameState.dice.isProcessing = true;
   console.log('🎲 Starting new dice game...');
   
-  clearGameTimers();
+  // Only clear dice timers and state, don't touch crash game
+  clearDiceTimers();
+  cleanupDiceState();
   
   const gameId = generateGameId();
   const serverSeed = generateServerSeed();
@@ -1550,7 +1561,7 @@ httpServer.listen(port, '0.0.0.0', () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  clearGameTimers();
+  clearAllGameTimers();
   httpServer.close(() => {
     console.log('Process terminated');
   });
@@ -1558,7 +1569,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
-  clearGameTimers();
+  clearAllGameTimers();
   httpServer.close(() => {
     console.log('Process terminated');
   });
