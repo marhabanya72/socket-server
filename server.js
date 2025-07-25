@@ -472,7 +472,7 @@ async function safeCrashDatabase(functionName, ...args) {
   }
 }
 
-// Game state management
+// Game state management - ADD LOCK TO PREVENT MULTIPLE GAMES
 const gameState = {
   dice: {
     currentGame: null,
@@ -486,14 +486,16 @@ const gameState = {
   crash: {
     currentGame: null,
     history: [],
-    players: new Map(),
+    players: new Map(), // Store by userId instead of socketId
+    socketToUser: new Map(), // Map socketId to userId
     gameCounter: 0,
     bettingInterval: null,
     flyingInterval: null,
     isProcessing: false,
     currentMultiplier: 1.00,
     startTime: null,
-    crashed: false
+    crashed: false,
+    isGameLocked: false // PREVENT MULTIPLE GAMES
   },
   rps: {
     lobbies: new Map(),
@@ -624,17 +626,22 @@ function cleanupDiceState() {
   console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players`);
 }
 
-// Complete crash game cleanup
+// FIXED: Complete crash game cleanup - only for completed games
 function cleanupCrashState() {
-  const connectedCrashSockets = Array.from(gameState.crash.players.keys());
-  gameState.crash.players.clear();
+  // Only clear players if game is complete
+  if (gameState.crash.currentGame?.phase === 'complete') {
+    const connectedCrashPlayers = Array.from(gameState.crash.players.keys());
+    gameState.crash.players.clear();
+    gameState.crash.socketToUser.clear();
+    console.log(`🧹 Cleared ${connectedCrashPlayers.length} crash players from completed game`);
+  }
+  
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = null;
   gameState.crash.crashed = false;
-  console.log(`🧹 Cleared ${connectedCrashSockets.length} crash players`);
 }
 
-// ROBUST CRASH BET RECOVERY SYSTEM
+// ROBUST CRASH BET RECOVERY SYSTEM - FIXED
 async function recoverCrashBetForUser(socket, userData, gameId) {
   try {
     console.log(`🔄 Attempting bet recovery for user ${userData.username} in game ${gameId}`);
@@ -658,8 +665,9 @@ async function recoverCrashBetForUser(socket, userData, gameId) {
         payout: activeBet.payout
       };
       
-      // Add to game state
-      gameState.crash.players.set(socket.id, playerBet);
+      // Add to game state using userId as key
+      gameState.crash.players.set(userData.id, playerBet);
+      gameState.crash.socketToUser.set(socket.id, userData.id);
       
       // Notify user of recovered bet
       socket.emit('crash-bet-recovered', {
@@ -861,7 +869,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ROBUST CRASH GAME EVENTS - PROFESSIONAL IMPLEMENTATION
+  // ROBUST CRASH GAME EVENTS - FIXED VERSION
   socket.on('join-crash', async (userData) => {
     try {
       console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
@@ -886,8 +894,8 @@ io.on('connection', (socket) => {
           result: gameState.crash.currentGame.result
         });
         
-        // Attempt bet recovery
-        if (userData?.id && gameState.crash.currentGame.phase !== 'complete') {
+        // Attempt bet recovery ONLY for active games
+        if (userData?.id && ['betting', 'flying'].includes(gameState.crash.currentGame.phase)) {
           await recoverCrashBetForUser(socket, userData, gameState.crash.currentGame.id);
         }
       } else {
@@ -901,7 +909,17 @@ io.on('connection', (socket) => {
       }
 
       // Send current players list
-      const currentPlayers = Array.from(gameState.crash.players.values());
+      const currentPlayers = Array.from(gameState.crash.players.values()).map(player => ({
+        playerId: player.socketId,
+        userId: player.userId,
+        username: player.username,
+        amount: player.amount,
+        profilePicture: player.profilePicture,
+        isCashedOut: player.isCashedOut,
+        cashOutAt: player.cashOutAt,
+        payout: player.payout
+      }));
+      
       if (currentPlayers.length > 0) {
         socket.emit('crash-players-list', currentPlayers);
       }
@@ -910,7 +928,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // PROFESSIONAL CRASH BET PLACEMENT
+  // FIXED CRASH BET PLACEMENT
   socket.on('place-crash-bet', async (betData) => {
     try {
       console.log(`🚀 PROCESSING CRASH BET from ${betData.username}:`, {
@@ -933,10 +951,17 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Check for existing bet
+      // Check for existing bet by userId (not socketId)
+      if (gameState.crash.players.has(betData.userId)) {
+        console.log(`🚀❌ Bet rejected - user already has bet in memory`);
+        socket.emit('crash-bet-error', 'You already have a bet for this round');
+        return;
+      }
+
+      // Check database for existing bet
       const existingBet = await safeCrashDatabase('getUserActiveBet', betData.userId, gameState.crash.currentGame.id);
       if (existingBet) {
-        console.log(`🚀❌ Bet rejected - user already has bet:`, existingBet);
+        console.log(`🚀❌ Bet rejected - user already has bet in database:`, existingBet);
         socket.emit('crash-bet-error', 'You already have a bet for this round');
         return;
       }
@@ -989,8 +1014,9 @@ io.on('connection', (socket) => {
         payout: 0
       };
 
-      // Add to game state
-      gameState.crash.players.set(socket.id, playerBet);
+      // Add to game state using userId as key
+      gameState.crash.players.set(betData.userId, playerBet);
+      gameState.crash.socketToUser.set(socket.id, betData.userId);
       
       console.log(`🚀✅ Crash bet successful for ${betData.username}: ${betAmount} USDC`);
       console.log(`🚀📊 Total players in game: ${gameState.crash.players.size}`);
@@ -1054,7 +1080,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const player = gameState.crash.players.get(socket.id);
+      const player = gameState.crash.players.get(cashOutData.userId);
       if (!player) {
         socket.emit('crash-cash-out-error', 'No active bet found');
         return;
@@ -1084,7 +1110,7 @@ io.on('connection', (socket) => {
 
       // Notify all players
       io.to('crash-room').emit('crash-player-cashed-out', {
-        playerId: socket.id,
+        playerId: player.socketId,
         userId: player.userId,
         username: player.username,
         amount: player.amount,
@@ -1105,6 +1131,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // FIXED DISCONNECT HANDLING - DON'T REMOVE CRASH PLAYERS ON DISCONNECT
   socket.on('disconnect', (reason) => {
     try {
       console.log(`User disconnected: ${socket.id} (${reason})`);
@@ -1121,16 +1148,21 @@ io.on('connection', (socket) => {
         });
       }
       
-      // DON'T remove crash players on disconnect - they stay in game
-      if (gameState.crash.players.has(socket.id)) {
-        const player = gameState.crash.players.get(socket.id);
-        console.log(`🚀 Player ${player?.username} disconnected but bet remains active`);
+      // FIXED: DON'T remove crash players on disconnect - they should stay in game
+      const userId = gameState.crash.socketToUser.get(socket.id);
+      if (userId && gameState.crash.players.has(userId)) {
+        const player = gameState.crash.players.get(userId);
+        console.log(`🚀 Player ${player?.username} disconnected but bet remains active in game`);
         
-        // Only remove if game is complete/betting phase
-        if (!gameState.crash.currentGame || 
-            gameState.crash.currentGame.phase === 'complete' || 
-            gameState.crash.currentGame.phase === 'betting') {
-          gameState.crash.players.delete(socket.id);
+        // Update socket mapping but keep bet active
+        gameState.crash.socketToUser.delete(socket.id);
+        if (player) {
+          player.socketId = null; // Mark as disconnected but keep bet
+        }
+        
+        // Only remove from UI if game is completely finished
+        if (!gameState.crash.currentGame || gameState.crash.currentGame.phase === 'complete') {
+          gameState.crash.players.delete(userId);
           io.to('crash-room').emit('crash-player-left', {
             playerId: socket.id,
             username: player?.username
@@ -1436,22 +1468,24 @@ async function completeDiceGame() {
   }, 2000);
 }
 
-// PROFESSIONAL CRASH GAME IMPLEMENTATION
+// FIXED CRASH GAME IMPLEMENTATION - PREVENT MULTIPLE GAMES
 function startCrashGameLoop() {
   console.log('🚀 Starting professional crash game loop...');
   startNewCrashGame();
 }
 
 async function startNewCrashGame() {
-  if (gameState.crash.isProcessing) {
-    console.log('🚀 Crash game already being processed, skipping...');
+  // PREVENT MULTIPLE GAMES WITH LOCK
+  if (gameState.crash.isProcessing || gameState.crash.isGameLocked) {
+    console.log('🚀 Crash game already being processed or locked, skipping...');
     return;
   }
 
   gameState.crash.isProcessing = true;
+  gameState.crash.isGameLocked = true;
   console.log('🚀🆕 Starting new crash game...');
   
-  // Clear previous game state completely
+  // Clear previous game state only if game is complete
   clearCrashTimers();
   cleanupCrashState();
   
@@ -1497,6 +1531,7 @@ async function startNewCrashGame() {
   if (!dbSuccess) {
     console.error('❌ Failed to save crash game to database after 3 retries');
     gameState.crash.isProcessing = false;
+    gameState.crash.isGameLocked = false;
     setTimeout(() => startNewCrashGame(), 3000);
     return;
   }
@@ -1561,6 +1596,7 @@ function startCrashFlying() {
   if (!gameState.crash.currentGame) {
     console.error('🚀❌ No current crash game to start flying');
     gameState.crash.isProcessing = false;
+    gameState.crash.isGameLocked = false;
     return;
   }
 
@@ -1657,6 +1693,7 @@ async function completeCrashGame() {
   if (!gameState.crash.currentGame) {
     console.error('🚀❌ No current crash game to complete');
     gameState.crash.isProcessing = false;
+    gameState.crash.isGameLocked = false;
     return;
   }
 
@@ -1678,7 +1715,7 @@ async function completeCrashGame() {
 
   const dbOperations = [];
 
-  for (const [socketId, player] of gameState.crash.players.entries()) {
+  for (const [userId, player] of gameState.crash.players.entries()) {
     totalWagered += player.amount;
     
     if (player.isCashedOut && player.cashOutAt <= finalCrashPoint) {
@@ -1773,7 +1810,11 @@ async function completeCrashGame() {
 
   console.log(`🚀✅ Game ${gameId} - all results broadcast`);
 
+  // Mark game as complete and clear players
+  gameState.crash.currentGame.phase = 'complete';
+  cleanupCrashState();
   gameState.crash.isProcessing = false;
+  gameState.crash.isGameLocked = false;
   
   // Start next game after delay
   setTimeout(() => {
