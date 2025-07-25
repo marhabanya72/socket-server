@@ -77,6 +77,47 @@ export async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Crash games table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS crash_games (
+        id VARCHAR(100) PRIMARY KEY,
+        server_seed VARCHAR(255) NOT NULL,
+        hashed_seed VARCHAR(255) NOT NULL,
+        public_seed VARCHAR(255),
+        nonce INT NOT NULL,
+        crash_point DECIMAL(10, 2),
+        total_wagered DECIMAL(20, 8) DEFAULT 0.00000000,
+        total_payout DECIMAL(20, 8) DEFAULT 0.00000000,
+        players_count INT DEFAULT 0,
+        status ENUM('betting', 'flying', 'crashed', 'complete') DEFAULT 'betting',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        crashed_at TIMESTAMP NULL,
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Crash bets table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS crash_bets (
+        id VARCHAR(36) PRIMARY KEY,
+        game_id VARCHAR(100) NOT NULL,
+        user_id VARCHAR(36) NOT NULL,
+        amount DECIMAL(20, 8) NOT NULL,
+        cash_out_at DECIMAL(10, 2) DEFAULT NULL,
+        payout DECIMAL(20, 8) DEFAULT 0.00000000,
+        is_cashed_out BOOLEAN DEFAULT FALSE,
+        is_winner BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        cashed_out_at TIMESTAMP NULL,
+        FOREIGN KEY (game_id) REFERENCES crash_games(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_game_id (game_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_created_at (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // RPS lobbies table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS rps_lobbies (
@@ -143,7 +184,7 @@ export async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS game_statistics (
         id INT AUTO_INCREMENT PRIMARY KEY,
         date DATE NOT NULL,
-        game_type ENUM('dice', 'rps') NOT NULL,
+        game_type ENUM('dice', 'rps', 'crash') NOT NULL,
         total_games INT DEFAULT 0,
         total_wagered DECIMAL(20, 8) DEFAULT 0.00000000,
         total_payout DECIMAL(20, 8) DEFAULT 0.00000000,
@@ -403,6 +444,133 @@ export class DiceDatabase {
   }
 }
 
+// Crash game operations
+export class CrashDatabase {
+  static async createGame(gameData: {
+    id: string;
+    serverSeed: string;
+    hashedSeed: string;
+    publicSeed?: string;
+    nonce: number;
+  }) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        `INSERT INTO crash_games (id, server_seed, hashed_seed, public_seed, nonce)
+         VALUES (?, ?, ?, ?, ?)`,
+        [gameData.id, gameData.serverSeed, gameData.hashedSeed, gameData.publicSeed || null, gameData.nonce]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async completeGame(gameId: string, result: {
+    crashPoint: number;
+    totalWagered: number;
+    totalPayout: number;
+    playersCount: number;
+  }) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        `UPDATE crash_games SET 
+         crash_point = ?, total_wagered = ?, total_payout = ?, 
+         players_count = ?, status = 'complete', crashed_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [result.crashPoint, result.totalWagered, result.totalPayout, result.playersCount, gameId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async placeBet(betData: {
+    id: string;
+    gameId: string;
+    userId: string;
+    amount: number;
+  }) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        `INSERT INTO crash_bets (id, game_id, user_id, amount)
+         VALUES (?, ?, ?, ?)`,
+        [betData.id, betData.gameId, betData.userId, betData.amount]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async cashOut(betId: string, cashOutMultiplier: number, payout: number) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        `UPDATE crash_bets SET 
+         is_cashed_out = TRUE, 
+         is_winner = TRUE, 
+         cash_out_at = ?, 
+         payout = ?, 
+         cashed_out_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [cashOutMultiplier, payout, betId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async updateBetResult(betId: string, isWinner: boolean, payout: number) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        'UPDATE crash_bets SET is_winner = ?, payout = ? WHERE id = ?',
+        [isWinner, payout, betId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getGameHistory(limit: number = 20) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.execute(
+        `SELECT cg.*, COUNT(cb.id) as bet_count, COALESCE(SUM(cb.amount), 0) as total_wagered
+         FROM crash_games cg
+         LEFT JOIN crash_bets cb ON cg.id = cb.game_id
+         WHERE cg.status = 'complete'
+         GROUP BY cg.id
+         ORDER BY cg.crashed_at DESC
+         LIMIT ?`,
+        [limit]
+      );
+      return rows as any[];
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getUserHistory(userId: string, limit: number = 20) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.execute(
+        `SELECT cb.*, cg.crash_point, cg.crashed_at
+         FROM crash_bets cb
+         INNER JOIN crash_games cg ON cb.game_id = cg.id
+         WHERE cb.user_id = ? AND cg.status = 'complete'
+         ORDER BY cb.created_at DESC
+         LIMIT ?`,
+        [userId, limit]
+      );
+      return rows as any[];
+    } finally {
+      connection.release();
+    }
+  }
+}
+
 // RPS game operations
 export class RPSDatabase {
   static async createLobby(lobbyData: {
@@ -520,7 +688,6 @@ export class RPSDatabase {
     }
   }
 
-  // Get user-specific battle history from rps_user_history table
   static async getUserHistory(userId: string, limit: number = 20) {
     const connection = await pool.getConnection();
     try {
@@ -537,7 +704,6 @@ export class RPSDatabase {
     }
   }
 
-  // Get recent public battles from rps_recent_battles table
   static async getRecentBattles(limit: number = 10) {
     const connection = await pool.getConnection();
     try {
@@ -553,7 +719,6 @@ export class RPSDatabase {
     }
   }
 
-  // Add user-specific battle history entry
   static async addUserHistory(historyData: {
     id: string;
     userId: string;
@@ -579,7 +744,6 @@ export class RPSDatabase {
     }
   }
 
-  // Add recent public battle entry
   static async addRecentBattle(battleData: {
     id: string;
     player1Id: string;
@@ -607,7 +771,6 @@ export class RPSDatabase {
          battleData.winnerId, battleData.winnerUsername, battleData.amount, battleData.payout, battleData.isVsBot]
       );
 
-      // Keep only the latest 50 recent battles
       await connection.execute(
         `DELETE FROM rps_recent_battles WHERE id NOT IN (
           SELECT id FROM (
@@ -652,7 +815,7 @@ export class ChatDatabase {
          LIMIT ?`,
         [limit]
       );
-      return (rows as any[]).reverse(); // Return in chronological order
+      return (rows as any[]).reverse();
     } finally {
       connection.release();
     }
