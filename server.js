@@ -650,8 +650,6 @@ function cleanupCrashState() {
 io.on('connection', (socket) => {
   console.log(`🔌 User connected: ${socket.id}`);
   
-  // Set socket timeout and error handling
-  socket.setTimeout(120000);
   
   socket.on('error', (error) => {
     console.error(`❌ Socket error for ${socket.id}:`, error);
