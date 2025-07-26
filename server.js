@@ -503,7 +503,8 @@ const gameState = {
     history: []
   },
   chat: {
-    messages: []
+    messages: [],
+    onlineUsers: new Set() // Track online chat users
   },
   connectedUsers: new Map()
 };
@@ -699,6 +700,13 @@ async function recoverCrashBetForUser(socket, userData, gameId) {
   }
 }
 
+// Function to broadcast online user count
+function broadcastOnlineUserCount() {
+  const count = gameState.chat.onlineUsers.size;
+  io.to('chat-room').emit('online-users-count', count);
+  console.log(`💬 Broadcasting online user count: ${count}`);
+}
+
 // Socket.IO event handlers
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -706,6 +714,64 @@ io.on('connection', (socket) => {
   socket.on('user-connect', (userData) => {
     gameState.connectedUsers.set(socket.id, userData);
     socket.userData = userData;
+  });
+
+  // Live Chat Events - NEW
+  socket.on('join-chat', (userData) => {
+    console.log(`💬 User joining chat room: ${userData?.username} (${socket.id})`);
+    socket.join('chat-room');
+    socket.userData = userData;
+    
+    // Add user to online users set
+    if (userData?.id) {
+      gameState.chat.onlineUsers.add(userData.id);
+    }
+    
+    // Send chat history
+    if (gameState.chat.messages.length > 0) {
+      socket.emit('chat-history', gameState.chat.messages.slice(-50)); // Last 50 messages
+    }
+    
+    // Broadcast updated online count
+    broadcastOnlineUserCount();
+    
+    console.log(`💬 ${userData?.username} joined chat. Online users: ${gameState.chat.onlineUsers.size}`);
+  });
+
+  socket.on('send-message', (messageData) => {
+    try {
+      console.log(`💬 Message from ${messageData.username}:`, messageData.message);
+      
+      if (!messageData.userId || !messageData.username || !messageData.message) {
+        console.log('💬 Invalid message data');
+        return;
+      }
+      
+      const message = {
+        id: require('crypto').randomUUID(),
+        userId: messageData.userId,
+        username: messageData.username,
+        message: messageData.message.trim(),
+        timestamp: new Date(),
+        profilePicture: messageData.profilePicture || '/default-avatar.png'
+      };
+      
+      // Add to message history
+      gameState.chat.messages.push(message);
+      
+      // Keep only last 100 messages
+      if (gameState.chat.messages.length > 100) {
+        gameState.chat.messages = gameState.chat.messages.slice(-100);
+      }
+      
+      // Broadcast to all chat users
+      io.to('chat-room').emit('new-message', message);
+      
+      console.log(`💬 Message broadcast to chat room from ${messageData.username}`);
+      
+    } catch (error) {
+      console.error('❌ Error processing chat message:', error);
+    }
   });
 
   // Dice Game Events (working version - unchanged)
@@ -1131,10 +1197,17 @@ io.on('connection', (socket) => {
     }
   });
 
-  // FIXED DISCONNECT HANDLING - DON'T REMOVE CRASH PLAYERS ON DISCONNECT
+  // FIXED DISCONNECT HANDLING
   socket.on('disconnect', (reason) => {
     try {
       console.log(`User disconnected: ${socket.id} (${reason})`);
+      
+      // Remove from chat online users
+      if (socket.userData?.id) {
+        gameState.chat.onlineUsers.delete(socket.userData.id);
+        broadcastOnlineUserCount();
+        console.log(`💬 Removed ${socket.userData.username} from chat. Online users: ${gameState.chat.onlineUsers.size}`);
+      }
       
       // Clean up dice game
       if (gameState.dice.players.has(socket.id)) {
