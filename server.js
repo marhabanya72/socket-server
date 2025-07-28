@@ -1637,7 +1637,7 @@ io.on('connection', (socket) => {
       userId: 'bot',
       username: 'Bot',
       amount: botData.amount || lobby.creator.amount,
-      profilePicture: '/bot-avatar.png'
+      profilePicture: '/images/bot.png'
     };
     lobby.status = 'vs-bot';
 
@@ -1786,7 +1786,7 @@ io.on('connection', (socket) => {
         player1Move: moveData.move,
         player2Id: null, // Bot has no user ID
         player2Username: 'Bot',
-        player2Avatar: '/bot-avatar.png',
+        player2Avatar: '/images/bot.png',
         player2Move: botMove,
         winnerId: winnerId === 'draw' ? null : (winnerId === 'bot' ? null : winnerId),
         winnerUsername: winnerId === 'draw' ? null : (winnerId === 'bot' ? 'Bot' : lobby.creator.username),
@@ -1817,11 +1817,11 @@ io.on('connection', (socket) => {
           player2: battle.player2_id ? {
             id: battle.player2_id,
             username: battle.player2_username || 'Bot',
-            profilePicture: battle.player2_avatar || '/bot-avatar.png'
+            profilePicture: battle.player2_avatar || '/images/bot.png'
           } : {
             id: 'bot',
             username: 'Bot',
-            profilePicture: '/bot-avatar.png'
+            profilePicture: '/images/bot.png'
           },
           moves: {
             [battle.player1_id]: battle.player1_move,
@@ -2032,11 +2032,11 @@ io.on('connection', (socket) => {
             player2: battle.player2_id ? {
               id: battle.player2_id,
               username: battle.player2_username || 'Bot',
-              profilePicture: battle.player2_avatar || '/bot-avatar.png'
+              profilePicture: battle.player2_avatar || '/images/bot.png'
             } : {
               id: 'bot',
               username: 'Bot',
-              profilePicture: '/bot-avatar.png'
+              profilePicture: '/images/bot.png'
             },
             moves: {
               [battle.player1_id]: battle.player1_move,
