@@ -1,5 +1,5 @@
 // /Users/macbook/Documents/n1verse/server.js
-// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION
+// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION WITH WORKING RPS
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -351,7 +351,7 @@ try {
     }
   };
 
-  // RPS Database functions
+  // RPS Database functions - COMPLETE FROM OLD FILE
   RPSDatabase = {
     createLobby: async (lobbyData) => {
       let connection;
@@ -367,6 +367,180 @@ try {
       } catch (error) {
         console.error('❌ Database createLobby error:', error);
         return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    updateLobbyStatus: async (lobbyId, status, opponentId) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        if (opponentId) {
+          await connection.execute(
+            `UPDATE rps_lobbies SET status = ?, opponent_id = ? WHERE id = ?`,
+            [status, opponentId, lobbyId]
+          );
+        } else {
+          await connection.execute(
+            `UPDATE rps_lobbies SET status = ? WHERE id = ?`,
+            [status, lobbyId]
+          );
+        }
+        console.log(`🔄 Database: Lobby ${lobbyId} status updated to ${status}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database updateLobbyStatus error:', error);
+        return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    createBattle: async (battleData) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.execute(
+          `INSERT INTO rps_battles (id, lobby_id, player1_id, player2_id, amount, server_seed, hashed_seed, nonce, is_vs_bot)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [battleData.id, battleData.lobbyId, battleData.player1Id, battleData.player2Id, battleData.amount, 
+           battleData.serverSeed, battleData.hashedSeed, battleData.nonce, battleData.isVsBot]
+        );
+        console.log(`⚔️ Database: Battle created ${battleData.id}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database createBattle error:', error);
+        return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    completeBattle: async (battleId, result) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.execute(
+          `UPDATE rps_battles SET 
+           player1_move = ?, player2_move = ?, winner_id = ?, payout = ?
+           WHERE id = ?`,
+          [result.player1Move, result.player2Move, result.winnerId, result.payout, battleId]
+        );
+        console.log(`🏁 Database: Battle completed ${battleId}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database completeBattle error:', error);
+        return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    addUserHistory: async (historyData) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.execute(
+          `INSERT INTO rps_user_history (id, user_id, opponent_id, opponent_username, user_move, opponent_move, result, amount, payout, is_vs_bot)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [historyData.id, historyData.userId, historyData.opponentId, historyData.opponentUsername, 
+           historyData.userMove, historyData.opponentMove, historyData.result, historyData.amount, historyData.payout, historyData.isVsBot]
+        );
+        console.log(`📜 Database: User history added for ${historyData.userId}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database addUserHistory error:', error);
+        return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    addRecentBattle: async (battleData) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        await connection.execute(
+          `INSERT INTO rps_recent_battles (id, player1_id, player1_username, player1_avatar, player1_move, 
+           player2_id, player2_username, player2_avatar, player2_move, winner_id, winner_username, amount, payout, is_vs_bot)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [battleData.id, battleData.player1Id, battleData.player1Username, battleData.player1Avatar, battleData.player1Move,
+           battleData.player2Id, battleData.player2Username, battleData.player2Avatar, battleData.player2Move,
+           battleData.winnerId, battleData.winnerUsername, battleData.amount, battleData.payout, battleData.isVsBot]
+        );
+
+        // Keep only the latest 50 recent battles
+        await connection.execute(
+          `DELETE FROM rps_recent_battles WHERE id NOT IN (
+            SELECT id FROM (
+              SELECT id FROM rps_recent_battles ORDER BY created_at DESC LIMIT 50
+            ) AS temp
+          )`
+        );
+        console.log(`🌐 Database: Recent battle added ${battleData.id}`);
+        return true;
+      } catch (error) {
+        console.error('❌ Database addRecentBattle error:', error);
+        return false;
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    getUserHistory: async (userId, limit = 20) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [rows] = await connection.execute(
+          `SELECT * FROM rps_user_history 
+           WHERE user_id = ? 
+           ORDER BY created_at DESC 
+           LIMIT ?`,
+          [userId, limit]
+        );
+        return rows;
+      } catch (error) {
+        console.error('❌ Database getUserHistory error:', error);
+        return [];
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    getRecentBattles: async (limit = 10) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [rows] = await connection.execute(
+          `SELECT * FROM rps_recent_battles 
+           ORDER BY created_at DESC 
+           LIMIT ?`,
+          [limit]
+        );
+        return rows;
+      } catch (error) {
+        console.error('❌ Database getRecentBattles error:', error);
+        return [];
+      } finally {
+        if (connection) connection.release();
+      }
+    },
+    getBattleHistory: async (limit = 10) => {
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [rows] = await connection.execute(
+          `SELECT rb.*, 
+           u1.username as player1_username, u1.profile_picture as player1_avatar,
+           u2.username as player2_username, u2.profile_picture as player2_avatar,
+           winner.username as winner_username
+           FROM rps_battles rb
+           LEFT JOIN users u1 ON rb.player1_id = u1.id
+           LEFT JOIN users u2 ON rb.player2_id = u2.id
+           LEFT JOIN users winner ON rb.winner_id = winner.id
+           WHERE rb.player1_move IS NOT NULL AND rb.player2_move IS NOT NULL
+           ORDER BY rb.created_at DESC
+           LIMIT ?`,
+          [limit]
+        );
+        return rows;
+      } catch (error) {
+        console.error('❌ Database getBattleHistory error:', error);
+        return [];
       } finally {
         if (connection) connection.release();
       }
@@ -395,7 +569,15 @@ try {
     getUserActiveBet: async () => { console.log('📝 Mock: getUserActiveBet called'); return null; }
   };
   RPSDatabase = {
-    createLobby: async () => { console.log('📝 Mock: createLobby called'); return true; }
+    createLobby: async () => { console.log('📝 Mock: createLobby called'); return true; },
+    updateLobbyStatus: async () => { console.log('📝 Mock: updateLobbyStatus called'); return true; },
+    createBattle: async () => { console.log('📝 Mock: createBattle called'); return true; },
+    completeBattle: async () => { console.log('📝 Mock: completeBattle called'); return true; },
+    addUserHistory: async () => { console.log('📝 Mock: addUserHistory called'); return true; },
+    addRecentBattle: async () => { console.log('📝 Mock: addRecentBattle called'); return true; },
+    getUserHistory: async () => [],
+    getRecentBattles: async () => [],
+    getBattleHistory: async () => []
   };
 }
 
@@ -472,6 +654,22 @@ async function safeCrashDatabase(functionName, ...args) {
   }
 }
 
+async function safeRPSDatabase(functionName, ...args) {
+  try {
+    if (RPSDatabase && typeof RPSDatabase[functionName] === 'function') {
+      const result = await RPSDatabase[functionName](...args);
+      console.log(`✅ RPS Database ${functionName} completed successfully`);
+      return result;
+    } else {
+      console.log(`📝 Mock RPS Database ${functionName} called with args:`, args);
+      return null;
+    }
+  } catch (error) {
+    console.error(`❌ Error in RPS Database ${functionName}:`, error);
+    return null;
+  }
+}
+
 // Game state management - ADD LOCK TO PREVENT MULTIPLE GAMES
 const gameState = {
   dice: {
@@ -520,6 +718,14 @@ function generateCrashGameId() {
   return `crash_${Date.now()}_${gameState.crash.gameCounter}`;
 }
 
+function generateLobbyId() {
+  return `rps_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function generateBattleId() {
+  return `battle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 function generateServerSeed() {
   return require('crypto').randomBytes(32).toString('hex');
 }
@@ -547,6 +753,32 @@ function generateProvablyFairDiceResult(serverSeed, nonce) {
     value: diceValue,
     isOdd: diceValue % 2 === 1
   };
+}
+
+function generateProvablyFairRPSMove(hashedSeed, nonce) {
+  const crypto = require('crypto');
+  const moves = ['rock', 'paper', 'scissors'];
+  const hmac = crypto.createHmac('sha256', hashedSeed);
+  hmac.update(`${nonce}:rps`);
+  const hash = hmac.digest('hex');
+  
+  const hexSubstring = hash.substring(0, 2);
+  const intValue = parseInt(hexSubstring, 16);
+  const moveIndex = intValue % 3;
+  
+  return moves[moveIndex];
+}
+
+function determineRPSWinner(move1, move2) {
+  if (move1 === move2) return { winner: 'draw' };
+  
+  const wins = {
+    rock: 'scissors',
+    paper: 'rock',
+    scissors: 'paper'
+  };
+  
+  return { winner: wins[move1] === move2 ? 'player1' : 'player2' };
 }
 
 // PROFESSIONAL CRASH POINT GENERATION WITH PROPER MATHEMATICS
@@ -697,6 +929,46 @@ async function recoverCrashBetForUser(socket, userData, gameId) {
   } catch (error) {
     console.error(`❌ Error during bet recovery:`, error);
     return false;
+  }
+}
+
+// Helper function to get user profile picture from database
+async function getUserProfilePicture(userId) {
+  try {
+    if (!userId) return null;
+    
+    let mysql;
+    try {
+      mysql = require('mysql2/promise');
+    } catch (mysqlError) {
+      console.log('MySQL not available for profile lookup');
+      return null;
+    }
+
+    const pool = mysql.createPool({
+      host: process.env.DB_HOST?.split(':')[0] || 'db-fde-02.sparkedhost.us',
+      port: parseInt(process.env.DB_HOST?.split(':')[1] || '3306'),
+      user: process.env.DB_USER || 'u175260_2aWtznM6FW',
+      password: process.env.DB_PASSWORD || 'giqaKuZnR72ZdQL=m.DVdtUB',
+      database: process.env.DB_NAME || 's175260_casino-n1verse',
+      waitForConnections: true,
+    });
+
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      'SELECT profile_picture FROM users WHERE id = ?',
+      [userId]
+    );
+    connection.release();
+    await pool.end();
+
+    if (rows.length > 0 && rows[0].profile_picture) {
+      return rows[0].profile_picture;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error fetching user profile picture:', error);
+    return null;
   }
 }
 
@@ -1197,6 +1469,573 @@ io.on('connection', (socket) => {
     }
   });
 
+  // RPS Game Events - COMPLETE HANDLERS FROM OLD FILE
+  socket.on('join-rps', (userData) => {
+    console.log('User joined RPS room:', userData.username, 'Socket ID:', socket.id);
+    socket.join('rps-room');
+    socket.userData = userData;
+    
+    const currentLobbies = Array.from(gameState.rps.lobbies.values())
+      .filter(lobby => lobby.status === 'waiting')
+      .slice(0, 20);
+      
+    socket.emit('rps-lobbies-list', currentLobbies);
+    socket.emit('battle-history-updated', gameState.rps.history);
+    
+    console.log(`✅ Sent ${currentLobbies.length} lobbies to ${userData.username}`);
+  });
+
+  socket.on('create-rps-lobby', async (lobbyData) => {
+    console.log('Creating RPS lobby:', lobbyData, 'Socket ID:', socket.id);
+    
+    const lobbyId = generateLobbyId();
+    const hashedSeed = generateHashedSeed();
+    const newLobby = {
+      id: lobbyId,
+      creator: {
+        socketId: socket.id,
+        userId: lobbyData.userId,
+        username: lobbyData.username,
+        amount: lobbyData.amount,
+        profilePicture: socket.userData?.profilePicture || '/default-avatar.png'
+      },
+      opponent: null,
+      status: 'waiting',
+      createdAt: new Date(),
+      hashedSeed: hashedSeed
+    };
+
+    await safeRPSDatabase('createLobby', {
+      id: lobbyId,
+      creatorId: lobbyData.userId,
+      amount: lobbyData.amount,
+      hashedSeed: hashedSeed
+    });
+
+    gameState.rps.lobbies.set(lobbyId, newLobby);
+    socket.join(`rps-lobby-${lobbyId}`);
+    socket.lobbyId = lobbyId;
+    
+    console.log(`✅ Lobby created: ${lobbyId}, Socket lobbyId set to: ${socket.lobbyId}`);
+
+    // Clean up old lobbies (keep max 20)
+    const lobbiesArray = Array.from(gameState.rps.lobbies.values());
+    if (lobbiesArray.length > 20) {
+      lobbiesArray.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const lobbiesToKeep = lobbiesArray.slice(0, 20);
+      const lobbiesToRemove = lobbiesArray.slice(20);
+      
+      lobbiesToRemove.forEach(lobby => {
+        gameState.rps.lobbies.delete(lobby.id);
+        io.to(`rps-lobby-${lobby.id}`).emit('lobby-removed', lobby.id);
+      });
+    }
+
+    io.to('rps-room').emit('lobby-created', newLobby);
+    console.log('✅ Lobby broadcasted to all users:', newLobby.id);
+
+    // Auto-timeout after 30 seconds
+    setTimeout(() => {
+      const lobby = gameState.rps.lobbies.get(lobbyId);
+      if (lobby && lobby.status === 'waiting') {
+        console.log('⏰ Lobby timeout:', lobbyId);
+        socket.emit('lobby-timeout', lobbyId);
+      }
+    }, 30000);
+  });
+
+  socket.on('join-rps-lobby', (joinData) => {
+    console.log('User attempting to join lobby:', joinData);
+    
+    const lobby = gameState.rps.lobbies.get(joinData.lobbyId);
+    if (!lobby || lobby.status !== 'waiting') {
+      socket.emit('join-error', 'Lobby not available');
+      return;
+    }
+
+    if (lobby.creator.userId === joinData.userId) {
+      socket.emit('join-error', 'Cannot join your own lobby');
+      return;
+    }
+
+    lobby.opponent = {
+      socketId: socket.id,
+      userId: joinData.userId,
+      username: joinData.username,
+      amount: joinData.amount,
+      profilePicture: socket.userData?.profilePicture || '/default-avatar.png'
+    };
+    lobby.status = 'ready';
+
+    socket.join(`rps-lobby-${joinData.lobbyId}`);
+    
+    io.to(`rps-lobby-${joinData.lobbyId}`).emit('lobby-ready', lobby);
+    io.to('rps-room').emit('lobby-updated', lobby);
+    
+    console.log('Lobby joined successfully:', joinData.lobbyId);
+  });
+
+  socket.on('play-rps-bot', (botData) => {
+    console.log('User requesting bot battle:', botData);
+    console.log('Socket lobbyId:', socket.lobbyId);
+    console.log('Available lobbies:', Array.from(gameState.rps.lobbies.keys()));
+    
+    let lobbyId = socket.lobbyId;
+    let lobby = gameState.rps.lobbies.get(lobbyId);
+    
+    if (!lobby) {
+      console.log('Lobby not found by socket.lobbyId, searching by creator...');
+      for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
+        if (lobbyData.creator.socketId === socket.id || lobbyData.creator.userId === socket.userData?.userId) {
+          lobbyId = id;
+          lobby = lobbyData;
+          socket.lobbyId = id;
+          console.log('Found lobby by creator:', id);
+          break;
+        }
+      }
+    }
+    
+    if (!lobby) {
+      console.error('No lobby found for user:', socket.userData);
+      socket.emit('join-error', 'No active lobby found. Please create a new lobby.');
+      return;
+    }
+
+    console.log('Found lobby for bot battle:', lobby.id);
+
+    lobby.opponent = {
+      socketId: 'bot',
+      userId: 'bot',
+      username: 'Bot',
+      amount: botData.amount || lobby.creator.amount,
+      profilePicture: '/bot-avatar.png'
+    };
+    lobby.status = 'vs-bot';
+
+    io.to(`rps-lobby-${lobbyId}`).emit('bot-joined', lobby);
+    io.to('rps-room').emit('lobby-updated', lobby);
+    
+    console.log('✅ Bot joined lobby:', lobbyId);
+  });
+
+  socket.on('submit-rps-move', async (moveData) => {
+    console.log('Move submitted:', moveData);
+    console.log('Socket lobbyId:', socket.lobbyId);
+    
+    let lobby = gameState.rps.lobbies.get(moveData.lobbyId);
+    
+    if (!lobby && socket.lobbyId) {
+      lobby = gameState.rps.lobbies.get(socket.lobbyId);
+      moveData.lobbyId = socket.lobbyId;
+    }
+    
+    if (!lobby) {
+      for (const [id, lobbyData] of gameState.rps.lobbies.entries()) {
+        if (lobbyData.creator.socketId === socket.id || 
+            lobbyData.creator.userId === socket.userData?.userId ||
+            (lobbyData.opponent && lobbyData.opponent.socketId === socket.id)) {
+          lobby = lobbyData;
+          moveData.lobbyId = id;
+          console.log('Found lobby by user search:', id);
+          break;
+        }
+      }
+    }
+    
+    if (!lobby) {
+      console.error('No lobby found for move submission');
+      socket.emit('join-error', 'Battle session not found');
+      return;
+    }
+
+    console.log('Processing move for lobby:', lobby.id, 'Status:', lobby.status);
+
+    // Handle bot game - UPDATED WITH HISTORY RECORDING
+    if (lobby.status === 'vs-bot') {
+      const botMove = generateProvablyFairRPSMove(lobby.hashedSeed, moveData.nonce);
+      const result = determineRPSWinner(moveData.move, botMove);
+      
+      let winnerId = null;
+      let payout = 0;
+      const betAmount = lobby.creator.amount;
+      const totalPot = betAmount * 2;
+      
+      if (result.winner === 'player1') {
+        winnerId = lobby.creator.userId;
+        payout = totalPot * 0.95;
+        
+        await safeUpdateUserBalance(lobby.creator.userId, payout, 'add');
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, payout);
+        console.log(`✅ User ${lobby.creator.username} won ${payout} USDC (bet: ${betAmount})`);
+      } else if (result.winner === 'draw') {
+        winnerId = 'draw';
+        payout = betAmount;
+        
+        await safeUpdateUserBalance(lobby.creator.userId, betAmount, 'add');
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, betAmount);
+        console.log(`✅ Draw: Refunded ${betAmount} USDC to ${lobby.creator.username}`);
+      } else {
+        winnerId = 'bot';
+        payout = 0;
+        
+        await safeUpdateUserStats(lobby.creator.userId, betAmount, 0);
+        console.log(`✅ User ${lobby.creator.username} lost ${betAmount} USDC to bot`);
+      }
+
+      const battleResult = {
+        id: generateBattleId(),
+        player1: lobby.creator,
+        player2: lobby.opponent,
+        amount: lobby.creator.amount,
+        payout: payout,
+        moves: {
+          [lobby.creator.userId]: moveData.move,
+          'bot': botMove
+        },
+        winner: winnerId,
+        isVsBot: true,
+        serverSeed: lobby.hashedSeed,
+        hashedSeed: lobby.hashedSeed,
+        createdAt: new Date()
+      };
+
+      // NEW: Save bot battle to database tables for history tracking
+      console.log('🤖 Saving bot battle to database for history tracking...');
+      
+      // Update lobby status
+      await safeRPSDatabase('updateLobbyStatus', moveData.lobbyId, 'completed');
+
+      // Create battle record
+      await safeRPSDatabase('createBattle', {
+        id: battleResult.id,
+        lobbyId: moveData.lobbyId,
+        player1Id: lobby.creator.userId,
+        player2Id: null, // Bot has no user ID
+        amount: lobby.creator.amount,
+        serverSeed: lobby.hashedSeed,
+        hashedSeed: lobby.hashedSeed,
+        nonce: moveData.nonce,
+        isVsBot: true
+      });
+
+      // Complete battle record
+      await safeRPSDatabase('completeBattle', battleResult.id, {
+        player1Move: moveData.move,
+        player2Move: botMove,
+        winnerId: winnerId === 'draw' ? null : (winnerId === 'bot' ? null : winnerId),
+        payout: payout
+      });
+
+      // Determine result for user history
+      let userResult = 'lose';
+      if (winnerId === 'draw') {
+        userResult = 'draw';
+      } else if (winnerId === lobby.creator.userId) {
+        userResult = 'win';
+      }
+
+      // Add to user's personal battle history
+      await safeRPSDatabase('addUserHistory', {
+        id: battleResult.id + '_bot',
+        userId: lobby.creator.userId,
+        opponentId: null, // Bot has no user ID
+        opponentUsername: 'Bot',
+        userMove: moveData.move,
+        opponentMove: botMove,
+        result: userResult,
+        amount: lobby.creator.amount,
+        payout: userResult === 'win' ? payout : (userResult === 'draw' ? lobby.creator.amount : 0),
+        isVsBot: true
+      });
+
+      // Add to recent public battles
+      await safeRPSDatabase('addRecentBattle', {
+        id: battleResult.id,
+        player1Id: lobby.creator.userId,
+        player1Username: lobby.creator.username,
+        player1Avatar: lobby.creator.profilePicture || '/default-avatar.png',
+        player1Move: moveData.move,
+        player2Id: null, // Bot has no user ID
+        player2Username: 'Bot',
+        player2Avatar: '/bot-avatar.png',
+        player2Move: botMove,
+        winnerId: winnerId === 'draw' ? null : (winnerId === 'bot' ? null : winnerId),
+        winnerUsername: winnerId === 'draw' ? null : (winnerId === 'bot' ? 'Bot' : lobby.creator.username),
+        amount: lobby.creator.amount,
+        payout: payout,
+        isVsBot: true
+      });
+
+      console.log('✅ Bot battle history saved to database');
+
+      gameState.rps.history.unshift(battleResult);
+      if (gameState.rps.history.length > 50) {
+        gameState.rps.history = gameState.rps.history.slice(0, 50);
+      }
+
+      io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
+      
+      // Refresh and broadcast updated history from database
+      const freshHistory = await safeRPSDatabase('getBattleHistory', 10);
+      if (freshHistory && Array.isArray(freshHistory)) {
+        const formattedHistory = freshHistory.map(battle => ({
+          id: battle.id,
+          player1: {
+            id: battle.player1_id,
+            username: battle.player1_username,
+            profilePicture: battle.player1_avatar || '/default-avatar.png'
+          },
+          player2: battle.player2_id ? {
+            id: battle.player2_id,
+            username: battle.player2_username || 'Bot',
+            profilePicture: battle.player2_avatar || '/bot-avatar.png'
+          } : {
+            id: 'bot',
+            username: 'Bot',
+            profilePicture: '/bot-avatar.png'
+          },
+          moves: {
+            [battle.player1_id]: battle.player1_move,
+            [battle.player2_id || 'bot']: battle.player2_move
+          },
+          winner: battle.winner_id || (battle.is_vs_bot && battle.player1_move !== battle.player2_move ? 'bot' : battle.winner_id),
+          amount: Number(battle.amount),
+          payout: Number(battle.payout),
+          isVsBot: battle.is_vs_bot,
+          createdAt: battle.created_at
+        }));
+        io.to('rps-room').emit('battle-history-updated', formattedHistory);
+      } else {
+        io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
+      }
+      
+      gameState.rps.lobbies.delete(moveData.lobbyId);
+      io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
+      
+      console.log('✅ Bot battle completed:', battleResult.id, 'Winner:', winnerId);
+    }
+    // Handle PvP game (player vs player)
+    else if (lobby.status === 'ready') {
+      if (!gameState.rps.activeBattles.has(moveData.lobbyId)) {
+        gameState.rps.activeBattles.set(moveData.lobbyId, {
+          lobby: lobby,
+          moves: {},
+          players: [lobby.creator.userId, lobby.opponent.userId],
+          submittedCount: 0
+        });
+      }
+
+      const battle = gameState.rps.activeBattles.get(moveData.lobbyId);
+      
+      if (!battle.moves[socket.userData.userId]) {
+        battle.moves[socket.userData.userId] = moveData.move;
+        battle.submittedCount++;
+        
+        console.log(`Move submitted by ${socket.userData.username}: ${moveData.move} (${battle.submittedCount}/2)`);
+        
+        socket.emit('move-submitted', { 
+          message: 'Move submitted! Waiting for opponent...',
+          movesSubmitted: battle.submittedCount,
+          totalPlayers: 2
+        });
+        
+        io.to(`rps-lobby-${moveData.lobbyId}`).emit('moves-update', {
+          movesSubmitted: battle.submittedCount,
+          totalPlayers: 2,
+          waiting: battle.submittedCount < 2
+        });
+      } else {
+        socket.emit('move-error', 'You have already submitted your move');
+        return;
+      }
+
+      if (battle.submittedCount === 2 && Object.keys(battle.moves).length === 2) {
+        console.log('Both moves submitted, determining winner...');
+        
+        const move1 = battle.moves[lobby.creator.userId];
+        const move2 = battle.moves[lobby.opponent.userId];
+        
+        console.log(`PvP Battle: ${lobby.creator.username} (${move1}) vs ${lobby.opponent.username} (${move2})`);
+        
+        const result = determineRPSWinner(move1, move2);
+        
+        let winnerId = null;
+        let payout = 0;
+        const totalPot = lobby.creator.amount + lobby.opponent.amount;
+        
+        if (result.winner === 'player1') {
+          winnerId = lobby.creator.userId;
+          payout = totalPot * 0.95;
+          
+          await safeUpdateUserBalance(lobby.creator.userId, payout, 'add');
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, payout);
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, 0);
+          console.log(`✅ PvP: ${lobby.creator.username} won ${payout} USDC`);
+        } else if (result.winner === 'player2') {
+          winnerId = lobby.opponent.userId;
+          payout = totalPot * 0.95;
+          
+          await safeUpdateUserBalance(lobby.opponent.userId, payout, 'add');
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, payout);
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, 0);
+          console.log(`✅ PvP: ${lobby.opponent.username} won ${payout} USDC`);
+        } else {
+          winnerId = 'draw';
+          payout = lobby.creator.amount;
+          
+          await safeUpdateUserBalance(lobby.creator.userId, lobby.creator.amount, 'add');
+          await safeUpdateUserBalance(lobby.opponent.userId, lobby.opponent.amount, 'add');
+          await safeUpdateUserStats(lobby.creator.userId, lobby.creator.amount, lobby.creator.amount);
+          await safeUpdateUserStats(lobby.opponent.userId, lobby.opponent.amount, lobby.opponent.amount);
+          console.log(`✅ PvP Draw: Both players refunded`);
+        }
+
+        const battleResult = {
+          id: generateBattleId(),
+          player1: lobby.creator,
+          player2: lobby.opponent,
+          amount: lobby.creator.amount,
+          payout: payout,
+          moves: {
+            [lobby.creator.userId]: move1,
+            [lobby.opponent.userId]: move2
+          },
+          winner: winnerId,
+          isVsBot: false,
+          serverSeed: lobby.hashedSeed,
+          hashedSeed: lobby.hashedSeed,
+          createdAt: new Date()
+        };
+
+        await safeRPSDatabase('updateLobbyStatus', moveData.lobbyId, 'completed');
+
+        await safeRPSDatabase('createBattle', {
+          id: battleResult.id,
+          lobbyId: moveData.lobbyId,
+          player1Id: lobby.creator.userId,
+          player2Id: lobby.opponent.userId,
+          amount: lobby.creator.amount,
+          serverSeed: lobby.hashedSeed,
+          hashedSeed: lobby.hashedSeed,
+          nonce: moveData.nonce,
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('completeBattle', battleResult.id, {
+          player1Move: move1,
+          player2Move: move2,
+          winnerId: winnerId === 'draw' ? null : winnerId,
+          payout: payout
+        });
+
+        let player1Result = 'lose';
+        let player2Result = 'lose';
+        if (winnerId === 'draw') {
+          player1Result = 'draw';
+          player2Result = 'draw';
+        } else if (winnerId === lobby.creator.userId) {
+          player1Result = 'win';
+          player2Result = 'lose';
+        } else {
+          player1Result = 'lose';
+          player2Result = 'win';
+        }
+
+        await safeRPSDatabase('addUserHistory', {
+          id: battleResult.id + '_p1',
+          userId: lobby.creator.userId,
+          opponentId: lobby.opponent.userId,
+          opponentUsername: lobby.opponent.username,
+          userMove: move1,
+          opponentMove: move2,
+          result: player1Result,
+          amount: lobby.creator.amount,
+          payout: player1Result === 'win' ? payout : (player1Result === 'draw' ? lobby.creator.amount : 0),
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('addUserHistory', {
+          id: battleResult.id + '_p2',
+          userId: lobby.opponent.userId,
+          opponentId: lobby.creator.userId,
+          opponentUsername: lobby.creator.username,
+          userMove: move2,
+          opponentMove: move1,
+          result: player2Result,
+          amount: lobby.opponent.amount,
+          payout: player2Result === 'win' ? payout : (player2Result === 'draw' ? lobby.opponent.amount : 0),
+          isVsBot: false
+        });
+
+        await safeRPSDatabase('addRecentBattle', {
+          id: battleResult.id,
+          player1Id: lobby.creator.userId,
+          player1Username: lobby.creator.username,
+          player1Avatar: lobby.creator.profilePicture || '/default-avatar.png',
+          player1Move: move1,
+          player2Id: lobby.opponent.userId,
+          player2Username: lobby.opponent.username,
+          player2Avatar: lobby.opponent.profilePicture || '/default-avatar.png',
+          player2Move: move2,
+          winnerId: winnerId === 'draw' ? null : winnerId,
+          winnerUsername: winnerId === 'draw' ? null : (winnerId === lobby.creator.userId ? lobby.creator.username : lobby.opponent.username),
+          amount: lobby.creator.amount,
+          payout: payout,
+          isVsBot: false
+        });
+
+        gameState.rps.history.unshift(battleResult);
+        if (gameState.rps.history.length > 50) {
+          gameState.rps.history = gameState.rps.history.slice(0, 50);
+        }
+
+        io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
+        
+        const freshHistory = await safeRPSDatabase('getBattleHistory', 10);
+        if (freshHistory && Array.isArray(freshHistory)) {
+          const formattedHistory = freshHistory.map(battle => ({
+            id: battle.id,
+            player1: {
+              id: battle.player1_id,
+              username: battle.player1_username,
+              profilePicture: battle.player1_avatar
+            },
+            player2: battle.player2_id ? {
+              id: battle.player2_id,
+              username: battle.player2_username || 'Bot',
+              profilePicture: battle.player2_avatar || '/bot-avatar.png'
+            } : {
+              id: 'bot',
+              username: 'Bot',
+              profilePicture: '/bot-avatar.png'
+            },
+            moves: {
+              [battle.player1_id]: battle.player1_move,
+              [battle.player2_id || 'bot']: battle.player2_move
+            },
+            winner: battle.winner_id || (battle.is_vs_bot && battle.player1_move !== battle.player2_move ? 'bot' : battle.winner_id),
+            amount: Number(battle.amount),
+            payout: Number(battle.payout),
+            isVsBot: battle.is_vs_bot,
+            createdAt: battle.created_at
+          }));
+          io.to('rps-room').emit('battle-history-updated', formattedHistory);
+        } else {
+          io.to('rps-room').emit('battle-history-updated', gameState.rps.history.slice(0, 10));
+        }
+        
+        gameState.rps.activeBattles.delete(moveData.lobbyId);
+        gameState.rps.lobbies.delete(moveData.lobbyId);
+        io.to('rps-room').emit('lobby-removed', moveData.lobbyId);
+        
+        console.log('✅ PvP battle completed:', battleResult.id, 'Winner:', winnerId, 'Payout:', payout);
+      } else {
+        console.log(`Waiting for more moves: ${battle.submittedCount}/2 submitted`);
+      }
+    }
+  });
+
   // FIXED DISCONNECT HANDLING
   socket.on('disconnect', (reason) => {
     try {
@@ -1241,6 +2080,16 @@ io.on('connection', (socket) => {
             username: player?.username
           });
           console.log(`🚀 Removed ${player?.username} from completed crash game`);
+        }
+      }
+      
+      // Clean up RPS lobbies
+      if (socket.lobbyId) {
+        const lobby = gameState.rps.lobbies.get(socket.lobbyId);
+        if (lobby && lobby.creator.socketId === socket.id) {
+          gameState.rps.lobbies.delete(socket.lobbyId);
+          io.to('rps-room').emit('lobby-removed', socket.lobbyId);
+          console.log('Lobby removed due to creator disconnect:', socket.lobbyId);
         }
       }
       
@@ -1348,6 +2197,9 @@ async function startNewDiceGame() {
         gameId: gameState.dice.currentGame.id,
         hashedSeed: gameState.dice.currentGame.hashedSeed,
         phase: gameState.dice.currentGame.phase,
+        timeLeft: gameState.dice.currentGame,
+        // /Users/macbook/Documents/n1verse/server.js - PART 2 (Continuation)
+
         timeLeft: gameState.dice.currentGame.timeLeft
       });
     }
@@ -1900,9 +2752,9 @@ async function completeCrashGame() {
 httpServer.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Professional Socket.IO server running on port ${port}`);
   console.log(`🌐 CORS enabled for all domains`);
-  console.log(`💾 Database: ${UserDatabase && DiceDatabase && CrashDatabase ? 'Connected' : 'Mock mode'}`);
+  console.log(`💾 Database: ${UserDatabase && DiceDatabase && CrashDatabase && RPSDatabase ? 'Connected' : 'Mock mode'}`);
   
-  // Start both game loops
+  // Start all game loops
   startDiceGameLoop();
   startCrashGameLoop();
 });
