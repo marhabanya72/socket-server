@@ -43,49 +43,77 @@ try {
     reconnect: true
   });
 
-  // User Database functions
   UserDatabase = {
-    updateUserBalance: async (userId, amount, operation) => {
-      let connection;
-      try {
-        connection = await pool.getConnection();
-        const operator = operation === 'add' ? '+' : '-';
-        await connection.execute(
-          `UPDATE users SET balance = balance ${operator} ?, last_active = CURRENT_TIMESTAMP WHERE id = ?`,
-          [Math.abs(amount), userId]
-        );
-        console.log(`💰 Database: ${operation} ${amount} for user ${userId}`);
-        return true;
-      } catch (error) {
-        console.error('❌ Database updateUserBalance error:', error);
-        return false;
-      } finally {
-        if (connection) connection.release();
-      }
-    },
-    updateUserStats: async (userId, wagered, won) => {
-      let connection;
-      try {
-        connection = await pool.getConnection();
-        await connection.execute(
-          `UPDATE users SET 
-           total_wagered = total_wagered + ?,
-           total_won = total_won + ?,
-           games_played = games_played + 1,
-           last_active = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [wagered, won, userId]
-        );
-        console.log(`📊 Database: stats updated for user ${userId} - wagered: ${wagered}, won: ${won}`);
-        return true;
-      } catch (error) {
-        console.error('❌ Database updateUserStats error:', error);
-        return false;
-      } finally {
-        if (connection) connection.release();
-      }
+  updateUserBalance: async (userId, amount, operation) => {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const operator = operation === 'add' ? '+' : '-';
+      await connection.execute(
+        `UPDATE users SET balance = balance ${operator} ?, last_active = CURRENT_TIMESTAMP WHERE id = ?`,
+        [Math.abs(amount), userId]
+      );
+      console.log(`💰 Database: ${operation} ${amount} for user ${userId}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Database updateUserBalance error:', error);
+      return false;
+    } finally {
+      if (connection) connection.release();
     }
-  };
+  },
+  updateUserStats: async (userId, wagered, won) => {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      await connection.execute(
+        `UPDATE users SET 
+         total_wagered = total_wagered + ?,
+         total_won = total_won + ?,
+         games_played = games_played + 1,
+         last_active = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [wagered, won, userId]
+      );
+      console.log(`📊 Database: stats updated for user ${userId} - wagered: ${wagered}, won: ${won}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Database updateUserStats error:', error);
+      return false;
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+  // ADD THIS MISSING METHOD:
+  getUserById: async (userId) => {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.execute(
+        'SELECT id, username, balance, profile_picture FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (rows.length > 0) {
+        console.log(`✅ Database: User found ${userId} with balance ${rows[0].balance}`);
+        return {
+          id: rows[0].id,
+          username: rows[0].username,
+          balance: parseFloat(rows[0].balance),
+          profilePicture: rows[0].profile_picture
+        };
+      }
+      
+      console.log(`⚠️ Database: User not found ${userId}`);
+      return null;
+    } catch (error) {
+      console.error('❌ Database getUserById error:', error);
+      return null;
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+};
 
   // Dice Database functions
   DiceDatabase = {
