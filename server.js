@@ -1,5 +1,5 @@
 // /Users/macbook/Documents/n1verse/server.js
-// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION WITH WORKING RPS
+// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION WITH WORKING RPS AND POINTS SYSTEM
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -66,16 +66,49 @@ try {
     let connection;
     try {
       connection = await pool.getConnection();
+      
+      // Calculate points and experience from wager (10 points per USD, 1 XP per USD)
+      const pointsEarned = Math.floor(wagered * 10);
+      const experienceGained = Math.floor(wagered);
+      
+      console.log(`🎯 Points & XP calculation for user ${userId}:`);
+      console.log(`   Wagered: ${wagered} USD`);
+      console.log(`   Points earned: ${pointsEarned}`);
+      console.log(`   Experience gained: ${experienceGained}`);
+      
       await connection.execute(
         `UPDATE users SET 
          total_wagered = total_wagered + ?,
          total_won = total_won + ?,
          games_played = games_played + 1,
+         points = points + ?,
+         experience = experience + ?,
          last_active = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [wagered, won, userId]
+        [wagered, won, pointsEarned, experienceGained, userId]
       );
-      console.log(`📊 Database: stats updated for user ${userId} - wagered: ${wagered}, won: ${won}`);
+
+      // Update level based on new experience
+      const [userRows] = await connection.execute(
+        'SELECT experience, level FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (userRows.length > 0) {
+        const currentExp = userRows[0].experience;
+        const currentLevel = userRows[0].level;
+        const newLevel = Math.floor(currentExp / 800) + 1;
+        
+        if (newLevel > currentLevel) {
+          await connection.execute(
+            'UPDATE users SET level = ? WHERE id = ?',
+            [newLevel, userId]
+          );
+          console.log(`🆙 User ${userId} leveled up from ${currentLevel} to ${newLevel}!`);
+        }
+      }
+      
+      console.log(`📊 Database: stats updated for user ${userId} - wagered: ${wagered}, won: ${won}, points: +${pointsEarned}, exp: +${experienceGained}`);
       return true;
     } catch (error) {
       console.error('❌ Database updateUserStats error:', error);
@@ -84,23 +117,25 @@ try {
       if (connection) connection.release();
     }
   },
-  // ADD THIS MISSING METHOD:
   getUserById: async (userId) => {
     let connection;
     try {
       connection = await pool.getConnection();
       const [rows] = await connection.execute(
-        'SELECT id, username, balance, profile_picture FROM users WHERE id = ?',
+        'SELECT id, username, balance, profile_picture, points, experience, level FROM users WHERE id = ?',
         [userId]
       );
       
       if (rows.length > 0) {
-        console.log(`✅ Database: User found ${userId} with balance ${rows[0].balance}`);
+        console.log(`✅ Database: User found ${userId} with balance ${rows[0].balance}, points ${rows[0].points}, level ${rows[0].level}`);
         return {
           id: rows[0].id,
           username: rows[0].username,
           balance: parseFloat(rows[0].balance),
-          profilePicture: rows[0].profile_picture
+          profilePicture: rows[0].profile_picture,
+          points: parseInt(rows[0].points || 0),
+          experience: parseInt(rows[0].experience || 0),
+          level: parseInt(rows[0].level || 1)
         };
       }
       
@@ -580,7 +615,8 @@ try {
   console.log('⚠️ Database import failed, using mock functions');
   UserDatabase = {
     updateUserBalance: async () => { console.log('📝 Mock: updateUserBalance called'); return false; },
-    updateUserStats: async () => { console.log('📝 Mock: updateUserStats called'); return false; }
+    updateUserStats: async () => { console.log('📝 Mock: updateUserStats called'); return false; },
+    getUserById: async () => { console.log('📝 Mock: getUserById called'); return null; }
   };
   DiceDatabase = {
     createGame: async () => { console.log('📝 Mock: createGame called'); return true; },
@@ -635,7 +671,7 @@ async function safeUpdateUserStats(userId, wagered, won) {
     if (UserDatabase && typeof UserDatabase.updateUserStats === 'function') {
       const success = await UserDatabase.updateUserStats(userId, wagered, won);
       if (success) {
-        console.log(`✅ Stats updated: wagered ${wagered}, won ${won} for user ${userId}`);
+        console.log(`✅ Stats updated: wagered ${wagered}, won ${won} for user ${userId} (includes points & XP)`);
       } else {
         console.log(`⚠️ Stats update failed for user ${userId}`);
       }
@@ -1235,7 +1271,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ROBUST CRASH GAME EVENTS - FIXED VERSION
+  // ROBUST CRASH GAME EVENTS - COMPLETE HANDLERS
   socket.on('join-crash', async (userData) => {
     try {
       console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
@@ -1497,7 +1533,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // RPS Game Events - COMPLETE HANDLERS FROM OLD FILE
+  // RPS Game Events - COMPLETE HANDLERS
   socket.on('join-rps', (userData) => {
     console.log('User joined RPS room:', userData.username, 'Socket ID:', socket.id);
     socket.join('rps-room');
@@ -2082,6 +2118,8 @@ io.on('connection', (socket) => {
         gameState.dice.players.delete(socket.id);
         console.log(`🎲 Removed player ${player?.username} from dice game`);
         
+        // Continuation from Part 1 - starting from the disconnect handler
+
         io.to('dice-room').emit('player-left', {
           playerId: socket.id,
           username: player?.username
@@ -2225,9 +2263,6 @@ async function startNewDiceGame() {
         gameId: gameState.dice.currentGame.id,
         hashedSeed: gameState.dice.currentGame.hashedSeed,
         phase: gameState.dice.currentGame.phase,
-        timeLeft: gameState.dice.currentGame,
-        // /Users/macbook/Documents/n1verse/server.js - PART 2 (Continuation)
-
         timeLeft: gameState.dice.currentGame.timeLeft
       });
     }
@@ -2781,6 +2816,8 @@ httpServer.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Professional Socket.IO server running on port ${port}`);
   console.log(`🌐 CORS enabled for all domains`);
   console.log(`💾 Database: ${UserDatabase && DiceDatabase && CrashDatabase && RPSDatabase ? 'Connected' : 'Mock mode'}`);
+  console.log(`🎯 Points System: ACTIVE (10 points per USD wagered)`);
+  console.log(`📈 Experience System: ACTIVE (1 XP per USD wagered)`);
   
   // Start all game loops
   startDiceGameLoop();
