@@ -10,6 +10,37 @@ const pool = mysql.createPool({
   waitForConnections: true,
 });
 
+// Points and Experience System Logic
+export class PointsSystem {
+  // 1000 points per 100 USD wagered = 10 points per USD
+  static calculatePointsFromWager(wagerAmount: number): number {
+    return Math.floor(wagerAmount * 10);
+  }
+
+  // Experience levels: Level N requires N * 800 XP total
+  static calculateLevelFromExperience(experience: number): number {
+    return Math.floor(experience / 800) + 1;
+  }
+
+  static getExperienceForLevel(level: number): number {
+    return (level - 1) * 800;
+  }
+
+  static getExperienceNeededForNextLevel(currentExp: number): { currentLevel: number, expForCurrentLevel: number, expForNextLevel: number, progress: number } {
+    const currentLevel = this.calculateLevelFromExperience(currentExp);
+    const expForCurrentLevel = this.getExperienceForLevel(currentLevel);
+    const expForNextLevel = this.getExperienceForLevel(currentLevel + 1);
+    const progress = currentExp - expForCurrentLevel;
+    
+    return {
+      currentLevel,
+      expForCurrentLevel,
+      expForNextLevel,
+      progress
+    };
+  }
+}
+
 // Initialize database tables
 export async function initializeDatabase() {
   try {
@@ -28,12 +59,18 @@ export async function initializeDatabase() {
         total_wagered DECIMAL(20, 8) DEFAULT 0.00000000,
         total_won DECIMAL(20, 8) DEFAULT 0.00000000,
         games_played INT DEFAULT 0,
+        points BIGINT DEFAULT 0,
+        experience INT DEFAULT 0,
+        level INT DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_active BOOLEAN DEFAULT TRUE,
         INDEX idx_wallet (wallet_address),
         INDEX idx_username (username),
-        INDEX idx_created_at (created_at)
+        INDEX idx_created_at (created_at),
+        INDEX idx_points (points),
+        INDEX idx_level (level),
+        INDEX idx_experience (experience)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
@@ -268,8 +305,8 @@ export class UserDatabase {
     const connection = await pool.getConnection();
     try {
       await connection.execute(
-        `INSERT INTO users (id, username, email, wallet_address, referral_code, profile_picture)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, username, email, wallet_address, referral_code, profile_picture, points, experience, level)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1)`,
         [userData.id, userData.username, userData.email || null, userData.walletAddress, userData.referralCode || null, userData.profilePicture]
       );
       
@@ -323,15 +360,101 @@ export class UserDatabase {
   static async updateUserStats(userId: string, wagered: number, won: number) {
     const connection = await pool.getConnection();
     try {
+      // Calculate points from wager (10 points per USD wagered)
+      const pointsEarned = PointsSystem.calculatePointsFromWager(wagered);
+      const experienceGained = Math.floor(wagered); // 1 XP per USD wagered
+      
       await connection.execute(
         `UPDATE users SET 
          total_wagered = total_wagered + ?,
          total_won = total_won + ?,
          games_played = games_played + 1,
+         points = points + ?,
+         experience = experience + ?,
          last_active = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [wagered, won, userId]
+        [wagered, won, pointsEarned, experienceGained, userId]
       );
+
+      // Update level based on new experience
+      const user = await this.getUserById(userId);
+      if (user) {
+        const newLevel = PointsSystem.calculateLevelFromExperience(user.experience);
+        if (newLevel !== user.level) {
+          await connection.execute(
+            'UPDATE users SET level = ? WHERE id = ?',
+            [newLevel, userId]
+          );
+        }
+      }
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async updateProfilePicture(userId: string, profilePicture: string) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        'UPDATE users SET profile_picture = ?, last_active = CURRENT_TIMESTAMP WHERE id = ?',
+        [profilePicture, userId]
+      );
+      return await this.getUserById(userId);
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getLeaderboard(limit: number = 100) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.execute(
+        `SELECT 
+          id, username, profile_picture, points, experience, level, 
+          total_wagered, total_won, games_played, created_at,
+          ROW_NUMBER() OVER (ORDER BY points DESC, total_wagered DESC) as rank_position
+         FROM users 
+         WHERE is_active = TRUE 
+         ORDER BY points DESC, total_wagered DESC 
+         LIMIT ?`,
+        [limit]
+      );
+      return rows as any[];
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getUserRank(userId: string) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.execute(
+        `SELECT rank_position FROM (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY points DESC, total_wagered DESC) as rank_position
+          FROM users WHERE is_active = TRUE
+        ) ranked WHERE id = ?`,
+        [userId]
+      );
+      return (rows as any[])[0]?.rank_position || null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getUserStats(userId: string) {
+    const connection = await pool.getConnection();
+    try {
+      const user = await this.getUserById(userId);
+      if (!user) return null;
+
+      const rank = await this.getUserRank(userId);
+      const levelInfo = PointsSystem.getExperienceNeededForNextLevel(user.experience);
+
+      return {
+        ...user,
+        rank,
+        levelInfo
+      };
     } finally {
       connection.release();
     }
