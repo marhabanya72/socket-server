@@ -778,23 +778,33 @@ static async getGamePlayers(gameId: string) {
   }
 
   static async getGameHistory(limit: number = 20) {
-    const connection = await pool.getConnection();
-    try {
-      const [rows] = await connection.execute(
-        `SELECT cg.*, COUNT(cb.id) as bet_count, COALESCE(SUM(cb.amount), 0) as total_wagered
-         FROM crash_games cg
-         LEFT JOIN crash_bets cb ON cg.id = cb.game_id
-         WHERE cg.status = 'complete'
-         GROUP BY cg.id
-         ORDER BY cg.crashed_at DESC
-         LIMIT ?`,
-        [limit]
-      );
-      return rows as any[];
-    } finally {
-      connection.release();
+  const connection = await pool.getConnection();
+  try {
+    const [rows] = await connection.execute(
+      `SELECT cg.*, COUNT(cb.id) as bet_count, COALESCE(SUM(cb.amount), 0) as total_wagered
+       FROM crash_games cg
+       LEFT JOIN crash_bets cb ON cg.id = cb.game_id
+       WHERE cg.status = 'complete'
+       GROUP BY cg.id
+       ORDER BY cg.crashed_at DESC, cg.created_at DESC, cg.id DESC
+       LIMIT ?`,
+      [limit]
+    );
+    
+    // Cast rows to array first
+    const gameRows = rows as any[];
+    
+    // Log the retrieved games for debugging
+    console.log(`🚀 Database: Retrieved ${gameRows.length} crash games from history`);
+    if (gameRows.length > 0) {
+      console.log(`🚀 First game: ${gameRows[0].id}, Last game: ${gameRows[gameRows.length - 1].id}`);
     }
+    
+    return gameRows;
+  } finally {
+    connection.release();
   }
+}
 
   static async getUserHistory(userId: string, limit: number = 20) {
     const connection = await pool.getConnection();
