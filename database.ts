@@ -425,124 +425,7 @@ export class UserDatabase {
     }
   }
 
-  static async getGameDetails(gameId: string) {
-  const connection = await pool.getConnection();
-  try {
-    // Get game details
-    const [gameRows] = await connection.execute(
-      `SELECT 
-        id,
-        crash_point,
-        total_wagered,
-        total_payout,
-        players_count,
-        hashed_seed,
-        server_seed,
-        created_at,
-        crashed_at,
-        status
-      FROM crash_games 
-      WHERE id = ?`,
-      [gameId]
-    );
-
-    if (!Array.isArray(gameRows) || gameRows.length === 0) {
-      // If no game found in crash_games, try to reconstruct from crash_bets
-      const [betCheckRows] = await connection.execute(
-        `SELECT COUNT(*) as bet_count FROM crash_bets WHERE game_id = ?`,
-        [gameId]
-      );
-      
-      const betCount = (betCheckRows as any[])[0]?.bet_count || 0;
-      
-      if (betCount === 0) {
-        return null; // No game found
-      }
-      
-      // Reconstruct game data from bets
-      const [betStatsRows] = await connection.execute(
-        `SELECT 
-          COUNT(*) as players_count,
-          SUM(amount) as total_wagered,
-          SUM(payout) as total_payout,
-          MAX(CASE WHEN cash_out_at IS NOT NULL THEN cash_out_at ELSE 1.00 END) as estimated_crash_point,
-          MIN(created_at) as game_start
-        FROM crash_bets 
-        WHERE game_id = ?`,
-        [gameId]
-      );
-      
-      const stats = (betStatsRows as any[])[0];
-      
-      return {
-        game: {
-          id: gameId,
-          crash_point: parseFloat(stats.estimated_crash_point || 1.33),
-          total_wagered: parseFloat(stats.total_wagered || 0),
-          total_payout: parseFloat(stats.total_payout || 0),
-          players_count: parseInt(stats.players_count || 0),
-          hashed_seed: 'Reconstructed from bets',
-          server_seed: null,
-          created_at: stats.game_start,
-          crashed_at: stats.game_start,
-          status: 'complete'
-        },
-        players: await this.getGamePlayers(gameId)
-      };
-    }
-
-    const game = gameRows[0] as any;
-    const players = await this.getGamePlayers(gameId);
-
-    return {
-      game,
-      players
-    };
-
-  } catch (error) {
-    console.error('Error getting crash game details:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-static async getGamePlayers(gameId: string) {
-  const connection = await pool.getConnection();
-  try {
-    const [betRows] = await connection.execute(
-      `SELECT 
-        cb.amount,
-        cb.cash_out_at,
-        cb.payout,
-        cb.is_cashed_out,
-        cb.is_winner,
-        cb.created_at,
-        u.username,
-        u.profile_picture
-      FROM crash_bets cb
-      JOIN users u ON cb.user_id = u.id
-      WHERE cb.game_id = ?
-      ORDER BY cb.payout DESC, cb.amount DESC`,
-      [gameId]
-    );
-
-    return (betRows as any[]).map(bet => ({
-      username: bet.username,
-      amount: parseFloat(bet.amount),
-      cashOutAt: bet.cash_out_at ? parseFloat(bet.cash_out_at) : null,
-      payout: parseFloat(bet.payout),
-      isWinner: bet.is_winner === 1,
-      profilePicture: bet.profile_picture
-    }));
-
-  } catch (error) {
-    console.error('Error getting crash game players:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
+  
 
   static async getUserRank(userId: string) {
     const connection = await pool.getConnection();
@@ -744,6 +627,125 @@ export class CrashDatabase {
       connection.release();
     }
   }
+
+  static async getGameDetails(gameId: string) {
+  const connection = await pool.getConnection();
+  try {
+    // Get game details
+    const [gameRows] = await connection.execute(
+      `SELECT 
+        id,
+        crash_point,
+        total_wagered,
+        total_payout,
+        players_count,
+        hashed_seed,
+        server_seed,
+        created_at,
+        crashed_at,
+        status
+      FROM crash_games 
+      WHERE id = ?`,
+      [gameId]
+    );
+
+    if (!Array.isArray(gameRows) || gameRows.length === 0) {
+      // If no game found in crash_games, try to reconstruct from crash_bets
+      const [betCheckRows] = await connection.execute(
+        `SELECT COUNT(*) as bet_count FROM crash_bets WHERE game_id = ?`,
+        [gameId]
+      );
+      
+      const betCount = (betCheckRows as any[])[0]?.bet_count || 0;
+      
+      if (betCount === 0) {
+        return null; // No game found
+      }
+      
+      // Reconstruct game data from bets
+      const [betStatsRows] = await connection.execute(
+        `SELECT 
+          COUNT(*) as players_count,
+          SUM(amount) as total_wagered,
+          SUM(payout) as total_payout,
+          MAX(CASE WHEN cash_out_at IS NOT NULL THEN cash_out_at ELSE 1.00 END) as estimated_crash_point,
+          MIN(created_at) as game_start
+        FROM crash_bets 
+        WHERE game_id = ?`,
+        [gameId]
+      );
+      
+      const stats = (betStatsRows as any[])[0];
+      
+      return {
+        game: {
+          id: gameId,
+          crash_point: parseFloat(stats.estimated_crash_point || 1.33),
+          total_wagered: parseFloat(stats.total_wagered || 0),
+          total_payout: parseFloat(stats.total_payout || 0),
+          players_count: parseInt(stats.players_count || 0),
+          hashed_seed: 'Reconstructed from bets',
+          server_seed: null,
+          created_at: stats.game_start,
+          crashed_at: stats.game_start,
+          status: 'complete'
+        },
+        players: await this.getGamePlayers(gameId)
+      };
+    }
+
+    const game = gameRows[0] as any;
+    const players = await this.getGamePlayers(gameId);
+
+    return {
+      game,
+      players
+    };
+
+  } catch (error) {
+    console.error('Error getting crash game details:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+static async getGamePlayers(gameId: string) {
+  const connection = await pool.getConnection();
+  try {
+    const [betRows] = await connection.execute(
+      `SELECT 
+        cb.amount,
+        cb.cash_out_at,
+        cb.payout,
+        cb.is_cashed_out,
+        cb.is_winner,
+        cb.created_at,
+        u.username,
+        u.profile_picture
+      FROM crash_bets cb
+      JOIN users u ON cb.user_id = u.id
+      WHERE cb.game_id = ?
+      ORDER BY cb.payout DESC, cb.amount DESC`,
+      [gameId]
+    );
+
+    return (betRows as any[]).map(bet => ({
+      username: bet.username,
+      amount: parseFloat(bet.amount),
+      cashOutAt: bet.cash_out_at ? parseFloat(bet.cash_out_at) : null,
+      payout: parseFloat(bet.payout),
+      isWinner: bet.is_winner === 1,
+      profilePicture: bet.profile_picture
+    }));
+
+  } catch (error) {
+    console.error('Error getting crash game players:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 
   static async cashOut(betId: string, cashOutMultiplier: number, payout: number) {
     const connection = await pool.getConnection();
