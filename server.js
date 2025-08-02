@@ -1,5 +1,4 @@
-// /Users/macbook/Documents/n1verse/server.js
-// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION WITH WORKING RPS AND POINTS SYSTEM
+// Complete Socket.IO server for Railway deployment - PROFESSIONAL CRASH GAME IMPLEMENTATION WITH IMPROVED PROVABLY FAIR ALGORITHMS
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -414,7 +413,7 @@ try {
     }
   };
 
-  // RPS Database functions - COMPLETE FROM OLD FILE
+  // RPS Database functions
   RPSDatabase = {
     createLobby: async (lobbyData) => {
       let connection;
@@ -734,7 +733,7 @@ async function safeRPSDatabase(functionName, ...args) {
   }
 }
 
-// Game state management - ADD LOCK TO PREVENT MULTIPLE GAMES
+// Game state management
 const gameState = {
   dice: {
     currentGame: null,
@@ -748,8 +747,8 @@ const gameState = {
   crash: {
     currentGame: null,
     history: [],
-    players: new Map(), // Store by userId instead of socketId
-    socketToUser: new Map(), // Map socketId to userId
+    players: new Map(),
+    socketToUser: new Map(),
     gameCounter: 0,
     bettingInterval: null,
     flyingInterval: null,
@@ -757,7 +756,7 @@ const gameState = {
     currentMultiplier: 1.00,
     startTime: null,
     crashed: false,
-    isGameLocked: false // PREVENT MULTIPLE GAMES
+    isGameLocked: false
   },
   rps: {
     lobbies: new Map(),
@@ -766,7 +765,7 @@ const gameState = {
   },
   chat: {
     messages: [],
-    onlineUsers: new Set() // Track online chat users
+    onlineUsers: new Set()
   },
   connectedUsers: new Map()
 };
@@ -803,32 +802,87 @@ function generateHashedSeed() {
   return generateHash(seed);
 }
 
-function generateProvablyFairDiceResult(serverSeed, nonce) {
+// IMPROVED PROVABLY FAIR ALGORITHMS
+
+// IMPROVED DICE GAME ALGORITHM - Better distribution with proper client seed integration
+function generateProvablyFairDiceResult(serverSeed, clientSeed, nonce) {
   const crypto = require('crypto');
-  const hmac = crypto.createHmac('sha256', serverSeed);
-  hmac.update(`${nonce}:dice`);
-  const hash = hmac.digest('hex');
   
-  const hexSubstring = hash.substring(0, 2);
+  // Create HMAC with server seed and combine client seed + nonce
+  const saltedSeed = crypto.createHmac('sha256', serverSeed)
+    .update(`${clientSeed}:${nonce}:dice`)
+    .digest('hex');
+  
+  // Use first 8 characters for better randomness
+  const hexSubstring = saltedSeed.substring(0, 8);
   const intValue = parseInt(hexSubstring, 16);
+  
+  // Better distribution using modulo 6
   const diceValue = (intValue % 6) + 1;
+  
+  console.log(`🎲 Dice Fairness: ServerSeed=${serverSeed.substring(0, 8)}..., ClientSeed=${clientSeed}, Nonce=${nonce}, HMAC=${saltedSeed.substring(0, 16)}..., Result=${diceValue}`);
   
   return {
     value: diceValue,
-    isOdd: diceValue % 2 === 1
+    isOdd: diceValue % 2 === 1,
+    hmac: saltedSeed
   };
 }
 
-function generateProvablyFairRPSMove(hashedSeed, nonce) {
+// INDUSTRY STANDARD CRASH GAME ALGORITHM - Prevents extreme multipliers
+function generateProvablyFairCrashPoint(serverSeed, clientSeed, nonce) {
+  const crypto = require('crypto');
+  
+  // Create salted seed using proper HMAC
+  const saltedSeed = crypto.createHmac('sha256', serverSeed)
+    .update(`${clientSeed}:${nonce}:crash`)
+    .digest('hex');
+  
+  console.log(`🚀 Crash Fairness Debug: ServerSeed=${serverSeed.substring(0, 8)}..., ClientSeed=${clientSeed}, Nonce=${nonce}`);
+  console.log(`🚀 Salted Seed: ${saltedSeed}`);
+  
+  // Check for instant crash (5% chance)
+  function isDivisible(hash, mod) {
+    return BigInt("0x" + hash) % BigInt(mod) === 0n;
+  }
+  
+  if (isDivisible(saltedSeed, 20)) {
+    console.log(`🚀 Instant crash triggered (1/20 chance)`);
+    return 1.00;
+  }
+  
+  // Standard crash algorithm
+  const h = parseInt(saltedSeed.slice(0, 13), 16);
+  const e = Math.pow(2, 52);
+  
+  console.log(`🚀 Crash Calculation: h=${h}, e=${e}`);
+  
+  const crashPoint = Math.floor((100 * e - h) / (e - h)) / 100;
+  
+  // Ensure minimum crash point and reasonable maximum
+  const finalCrashPoint = Math.max(1.00, Math.min(crashPoint, 10000.00));
+  
+  console.log(`🚀 Final Crash Point: ${finalCrashPoint.toFixed(2)}x`);
+  
+  return Math.round(finalCrashPoint * 100) / 100;
+}
+
+// IMPROVED RPS ALGORITHM - Better randomness
+function generateProvablyFairRPSMove(serverSeed, clientSeed, nonce) {
   const crypto = require('crypto');
   const moves = ['rock', 'paper', 'scissors'];
-  const hmac = crypto.createHmac('sha256', hashedSeed);
-  hmac.update(`${nonce}:rps`);
-  const hash = hmac.digest('hex');
   
-  const hexSubstring = hash.substring(0, 2);
+  // Create salted seed
+  const saltedSeed = crypto.createHmac('sha256', serverSeed)
+    .update(`${clientSeed}:${nonce}:rps`)
+    .digest('hex');
+  
+  // Use larger hex substring for better distribution
+  const hexSubstring = saltedSeed.substring(0, 8);
   const intValue = parseInt(hexSubstring, 16);
   const moveIndex = intValue % 3;
+  
+  console.log(`🏆 RPS Fairness: ServerSeed=${serverSeed.substring(0, 8)}..., ClientSeed=${clientSeed}, Nonce=${nonce}, HMAC=${saltedSeed.substring(0, 16)}..., Move=${moves[moveIndex]}`);
   
   return moves[moveIndex];
 }
@@ -843,43 +897,6 @@ function determineRPSWinner(move1, move2) {
   };
   
   return { winner: wins[move1] === move2 ? 'player1' : 'player2' };
-}
-
-// PROFESSIONAL CRASH POINT GENERATION WITH PROPER MATHEMATICS
-function generateProvablyFairCrashPoint(serverSeed, nonce) {
-  const crypto = require('crypto');
-  
-  // Create HMAC with server seed and nonce
-  const hmac = crypto.createHmac('sha256', serverSeed);
-  hmac.update(`${nonce}:crash`);
-  const hash = hmac.digest('hex');
-  
-  // Convert hash to number for randomness
-  const hexSubstring = hash.substring(0, 13); // Use 13 characters for higher precision
-  const H = parseInt(hexSubstring, 16);
-  const maxValue = Math.pow(16, 13);
-  
-  // Normalize to 0-1 range with high precision
-  const e = H / maxValue;
-  
-  // Apply crash game mathematical formula
-  // Using logarithmic distribution for realistic crash points
-  // House edge of approximately 1% is built into the formula
-  const houseEdge = 0.01;
-  const multiplier = (1 - houseEdge) / (1 - e);
-  
-  // Apply minimum and maximum bounds
-  let crashPoint = Math.max(1.00, multiplier);
-  
-  // Apply realistic distribution curve
-  // Most crashes should be between 1.0x - 10.0x with occasional high multipliers
-  if (crashPoint > 100) {
-    // Reduce probability of extremely high multipliers
-    crashPoint = Math.min(crashPoint, 1000 + (Math.random() * 9000));
-  }
-  
-  // Round to 2 decimal places for display
-  return Math.round(crashPoint * 100) / 100;
 }
 
 // Clear dice game timers only
@@ -923,9 +940,8 @@ function cleanupDiceState() {
   console.log(`🧹 Cleared ${connectedDiceSockets.length} dice players`);
 }
 
-// FIXED: Complete crash game cleanup - only for completed games
+// Complete crash game cleanup
 function cleanupCrashState() {
-  // Only clear players if game is complete
   if (gameState.crash.currentGame?.phase === 'complete') {
     const connectedCrashPlayers = Array.from(gameState.crash.players.keys());
     gameState.crash.players.clear();
@@ -938,7 +954,7 @@ function cleanupCrashState() {
   gameState.crash.crashed = false;
 }
 
-// ROBUST CRASH BET RECOVERY SYSTEM - FIXED
+// ROBUST CRASH BET RECOVERY SYSTEM
 async function recoverCrashBetForUser(socket, userData, gameId) {
   try {
     console.log(`🔄 Attempting bet recovery for user ${userData.username} in game ${gameId}`);
@@ -962,17 +978,14 @@ async function recoverCrashBetForUser(socket, userData, gameId) {
         payout: activeBet.payout
       };
       
-      // Add to game state using userId as key
       gameState.crash.players.set(userData.id, playerBet);
       gameState.crash.socketToUser.set(socket.id, userData.id);
       
-      // Notify user of recovered bet
       socket.emit('crash-bet-recovered', {
         bet: playerBet,
         message: `Bet recovered: ${activeBet.amount} USDC${activeBet.isCashedOut ? ` (Cashed out at ${activeBet.cashOutAt}x)` : ''}`
       });
       
-      // Notify all players
       io.to('crash-room').emit('crash-player-joined', {
         playerId: socket.id,
         userId: userData.id,
@@ -996,46 +1009,6 @@ async function recoverCrashBetForUser(socket, userData, gameId) {
   }
 }
 
-// Helper function to get user profile picture from database
-async function getUserProfilePicture(userId) {
-  try {
-    if (!userId) return null;
-    
-    let mysql;
-    try {
-      mysql = require('mysql2/promise');
-    } catch (mysqlError) {
-      console.log('MySQL not available for profile lookup');
-      return null;
-    }
-
-    const pool = mysql.createPool({
-      host: process.env.DB_HOST?.split(':')[0] || 'db-fde-02.sparkedhost.us',
-      port: parseInt(process.env.DB_HOST?.split(':')[1] || '3306'),
-      user: process.env.DB_USER || 'u175260_2aWtznM6FW',
-      password: process.env.DB_PASSWORD || 'giqaKuZnR72ZdQL=m.DVdtUB',
-      database: process.env.DB_NAME || 's175260_casino-n1verse',
-      waitForConnections: true,
-    });
-
-    const connection = await pool.getConnection();
-    const [rows] = await connection.execute(
-      'SELECT profile_picture FROM users WHERE id = ?',
-      [userId]
-    );
-    connection.release();
-    await pool.end();
-
-    if (rows.length > 0 && rows[0].profile_picture) {
-      return rows[0].profile_picture;
-    }
-    return null;
-  } catch (error) {
-    console.error('Error fetching user profile picture:', error);
-    return null;
-  }
-}
-
 // Function to broadcast online user count
 function broadcastOnlineUserCount() {
   const count = gameState.chat.onlineUsers.size;
@@ -1052,23 +1025,20 @@ io.on('connection', (socket) => {
     socket.userData = userData;
   });
 
-  // Live Chat Events - NEW
+  // Live Chat Events
   socket.on('join-chat', (userData) => {
     console.log(`💬 User joining chat room: ${userData?.username} (${socket.id})`);
     socket.join('chat-room');
     socket.userData = userData;
     
-    // Add user to online users set
     if (userData?.id) {
       gameState.chat.onlineUsers.add(userData.id);
     }
     
-    // Send chat history
     if (gameState.chat.messages.length > 0) {
-      socket.emit('chat-history', gameState.chat.messages.slice(-50)); // Last 50 messages
+      socket.emit('chat-history', gameState.chat.messages.slice(-50));
     }
     
-    // Broadcast updated online count
     broadcastOnlineUserCount();
     
     console.log(`💬 ${userData?.username} joined chat. Online users: ${gameState.chat.onlineUsers.size}`);
@@ -1092,15 +1062,12 @@ io.on('connection', (socket) => {
         profilePicture: messageData.profilePicture || '/default-avatar.png'
       };
       
-      // Add to message history
       gameState.chat.messages.push(message);
       
-      // Keep only last 100 messages
       if (gameState.chat.messages.length > 100) {
         gameState.chat.messages = gameState.chat.messages.slice(-100);
       }
       
-      // Broadcast to all chat users
       io.to('chat-room').emit('new-message', message);
       
       console.log(`💬 Message broadcast to chat room from ${messageData.username}`);
@@ -1110,7 +1077,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Dice Game Events (working version - unchanged)
+  // Dice Game Events
   socket.on('join-dice', (userData) => {
     console.log(`🎲 User joining dice room: ${userData?.username} (${socket.id})`);
     socket.join('dice-room');
@@ -1174,14 +1141,12 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Validate choice
       if (betData.choice !== 'odd' && betData.choice !== 'even') {
         console.log(`🎲 Bet rejected - invalid choice: ${betData.choice}`);
         socket.emit('bet-error', 'Invalid choice - must be odd or even');
         return;
       }
 
-      // Validate bet amount
       const betAmount = Number(betData.amount);
       if (isNaN(betAmount) || betAmount <= 0 || betAmount > 10000) {
         console.log(`🎲 Bet rejected - invalid amount: ${betAmount}`);
@@ -1202,10 +1167,10 @@ io.on('connection', (socket) => {
         profilePicture: betData.profilePicture || socket.userData?.profilePicture || '/default-avatar.png',
         timestamp: new Date(),
         gameId: gameState.dice.currentGame.id,
-        betId: betId
+        betId: betId,
+        clientSeed: betData.clientSeed || 'default-client-seed'
       };
       
-      // Try to save to database with error handling
       let dbSuccess = false;
       try {
         dbSuccess = await safeDiceDatabase('placeBet', {
@@ -1227,7 +1192,6 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Add player to game state
       gameState.dice.players.set(socket.id, playerBet);
 
       console.log(`✅ Bet placed successfully for ${betData.username}: ${betAmount} USDC on ${betData.choice}`);
@@ -1241,14 +1205,12 @@ io.on('connection', (socket) => {
         profilePicture: playerBet.profilePicture
       };
 
-      // Broadcast to all players
       try {
         io.to('dice-room').emit('player-joined', playerJoinedData);
       } catch (broadcastError) {
         console.error(`❌ Error broadcasting player joined:`, broadcastError);
       }
 
-      // Confirm to player
       try {
         socket.emit('bet-placed-confirmation', {
           success: true,
@@ -1271,7 +1233,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ROBUST CRASH GAME EVENTS - COMPLETE HANDLERS
+  // CRASH GAME EVENTS
   socket.on('join-crash', async (userData) => {
     try {
       console.log(`🚀 User joining crash room: ${userData?.username} (${socket.id})`);
@@ -1286,7 +1248,6 @@ io.on('connection', (socket) => {
           currentMultiplier: gameState.crash.currentMultiplier
         });
         
-        // Send current game state
         socket.emit('crash-game-state', {
           gameId: gameState.crash.currentGame.id,
           hashedSeed: gameState.crash.currentGame.hashedSeed,
@@ -1296,7 +1257,6 @@ io.on('connection', (socket) => {
           result: gameState.crash.currentGame.result
         });
         
-        // Attempt bet recovery ONLY for active games
         if (userData?.id && ['betting', 'flying'].includes(gameState.crash.currentGame.phase)) {
           await recoverCrashBetForUser(socket, userData, gameState.crash.currentGame.id);
         }
@@ -1310,7 +1270,6 @@ io.on('connection', (socket) => {
         });
       }
 
-      // Send current players list
       const currentPlayers = Array.from(gameState.crash.players.values()).map(player => ({
         playerId: player.socketId,
         userId: player.userId,
@@ -1330,7 +1289,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // FIXED CRASH BET PLACEMENT
   socket.on('place-crash-bet', async (betData) => {
     try {
       console.log(`🚀 PROCESSING CRASH BET from ${betData.username}:`, {
@@ -1340,7 +1298,6 @@ io.on('connection', (socket) => {
         gamePhase: gameState.crash.currentGame?.phase
       });
 
-      // Immediate validation
       if (!gameState.crash.currentGame) {
         console.log(`🚀❌ Bet rejected - no current crash game`);
         socket.emit('crash-bet-error', 'No active crash game found');
@@ -1353,14 +1310,12 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Check for existing bet by userId (not socketId)
       if (gameState.crash.players.has(betData.userId)) {
         console.log(`🚀❌ Bet rejected - user already has bet in memory`);
         socket.emit('crash-bet-error', 'You already have a bet for this round');
         return;
       }
 
-      // Check database for existing bet
       const existingBet = await safeCrashDatabase('getUserActiveBet', betData.userId, gameState.crash.currentGame.id);
       if (existingBet) {
         console.log(`🚀❌ Bet rejected - user already has bet in database:`, existingBet);
@@ -1368,7 +1323,6 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Validate bet data
       if (!betData.userId || !betData.username || !betData.amount) {
         console.log(`🚀❌ Bet rejected - missing required data`);
         socket.emit('crash-bet-error', 'Invalid bet data');
@@ -1387,7 +1341,6 @@ io.on('connection', (socket) => {
       
       console.log(`🚀💾 Saving crash bet to database: ${betId}`);
 
-      // Database save
       const dbSuccess = await safeCrashDatabase('placeBet', {
         id: betId,
         gameId: gameState.crash.currentGame.id,
@@ -1401,7 +1354,6 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Create player bet object
       const playerBet = {
         userId: betData.userId,
         username: betData.username,
@@ -1413,17 +1365,16 @@ io.on('connection', (socket) => {
         betId: betId,
         isCashedOut: false,
         cashOutAt: null,
-        payout: 0
+        payout: 0,
+        clientSeed: betData.clientSeed || 'default-client-seed'
       };
 
-      // Add to game state using userId as key
       gameState.crash.players.set(betData.userId, playerBet);
       gameState.crash.socketToUser.set(socket.id, betData.userId);
       
       console.log(`🚀✅ Crash bet successful for ${betData.username}: ${betAmount} USDC`);
       console.log(`🚀📊 Total players in game: ${gameState.crash.players.size}`);
 
-      // Prepare broadcast data
       const playerJoinedData = {
         playerId: socket.id,
         userId: betData.userId,
@@ -1433,14 +1384,11 @@ io.on('connection', (socket) => {
         isCashedOut: false
       };
 
-      // Use process.nextTick for safe async emission
       process.nextTick(() => {
         try {
-          // Broadcast to all players
           io.to('crash-room').emit('crash-player-joined', playerJoinedData);
           console.log(`🚀📡 Broadcasted player joined to crash room`);
           
-          // Confirm to player
           socket.emit('crash-bet-placed-confirmation', {
             success: true,
             bet: playerBet,
@@ -1496,12 +1444,10 @@ io.on('connection', (socket) => {
       const currentMultiplier = gameState.crash.currentMultiplier;
       const payout = player.amount * currentMultiplier;
 
-      // Update player state
       player.isCashedOut = true;
       player.cashOutAt = currentMultiplier;
       player.payout = payout;
 
-      // Update database
       const dbSuccess = await safeCrashDatabase('cashOut', player.betId, currentMultiplier, payout);
       if (dbSuccess) {
         await safeUpdateUserBalance(player.userId, payout, 'add');
@@ -1510,7 +1456,6 @@ io.on('connection', (socket) => {
 
       console.log(`🚀💰✅ Cash out successful: ${player.username} at ${currentMultiplier.toFixed(2)}x for ${payout.toFixed(2)} USDC`);
 
-      // Notify all players
       io.to('crash-room').emit('crash-player-cashed-out', {
         playerId: player.socketId,
         userId: player.userId,
@@ -1520,7 +1465,6 @@ io.on('connection', (socket) => {
         payout: payout
       });
 
-      // Notify the player
       socket.emit('crash-cash-out-success', {
         cashOutAt: currentMultiplier,
         payout: payout,
@@ -1533,7 +1477,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // RPS Game Events - COMPLETE HANDLERS
+  // RPS Game Events
   socket.on('join-rps', (userData) => {
     console.log('User joined RPS room:', userData.username, 'Socket ID:', socket.id);
     socket.join('rps-room');
@@ -1582,7 +1526,6 @@ io.on('connection', (socket) => {
     
     console.log(`✅ Lobby created: ${lobbyId}, Socket lobbyId set to: ${socket.lobbyId}`);
 
-    // Clean up old lobbies (keep max 20)
     const lobbiesArray = Array.from(gameState.rps.lobbies.values());
     if (lobbiesArray.length > 20) {
       lobbiesArray.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -1598,7 +1541,6 @@ io.on('connection', (socket) => {
     io.to('rps-room').emit('lobby-created', newLobby);
     console.log('✅ Lobby broadcasted to all users:', newLobby.id);
 
-    // Auto-timeout after 30 seconds
     setTimeout(() => {
       const lobby = gameState.rps.lobbies.get(lobbyId);
       if (lobby && lobby.status === 'waiting') {
@@ -1715,9 +1657,10 @@ io.on('connection', (socket) => {
 
     console.log('Processing move for lobby:', lobby.id, 'Status:', lobby.status);
 
-    // Handle bot game - UPDATED WITH HISTORY RECORDING
     if (lobby.status === 'vs-bot') {
-      const botMove = generateProvablyFairRPSMove(lobby.hashedSeed, moveData.nonce);
+      // IMPROVED RPS BOT LOGIC WITH PROPER CLIENT SEED
+      const clientSeed = moveData.clientSeed || 'default-client-seed';
+      const botMove = generateProvablyFairRPSMove(lobby.hashedSeed, clientSeed, moveData.nonce);
       const result = determineRPSWinner(moveData.move, botMove);
       
       let winnerId = null;
@@ -1764,18 +1707,15 @@ io.on('connection', (socket) => {
         createdAt: new Date()
       };
 
-      // NEW: Save bot battle to database tables for history tracking
       console.log('🤖 Saving bot battle to database for history tracking...');
       
-      // Update lobby status
       await safeRPSDatabase('updateLobbyStatus', moveData.lobbyId, 'completed');
 
-      // Create battle record
       await safeRPSDatabase('createBattle', {
         id: battleResult.id,
         lobbyId: moveData.lobbyId,
         player1Id: lobby.creator.userId,
-        player2Id: null, // Bot has no user ID
+        player2Id: null,
         amount: lobby.creator.amount,
         serverSeed: lobby.hashedSeed,
         hashedSeed: lobby.hashedSeed,
@@ -1783,7 +1723,6 @@ io.on('connection', (socket) => {
         isVsBot: true
       });
 
-      // Complete battle record
       await safeRPSDatabase('completeBattle', battleResult.id, {
         player1Move: moveData.move,
         player2Move: botMove,
@@ -1791,7 +1730,6 @@ io.on('connection', (socket) => {
         payout: payout
       });
 
-      // Determine result for user history
       let userResult = 'lose';
       if (winnerId === 'draw') {
         userResult = 'draw';
@@ -1799,11 +1737,10 @@ io.on('connection', (socket) => {
         userResult = 'win';
       }
 
-      // Add to user's personal battle history
       await safeRPSDatabase('addUserHistory', {
         id: battleResult.id + '_bot',
         userId: lobby.creator.userId,
-        opponentId: null, // Bot has no user ID
+        opponentId: null,
         opponentUsername: 'Bot',
         userMove: moveData.move,
         opponentMove: botMove,
@@ -1813,14 +1750,13 @@ io.on('connection', (socket) => {
         isVsBot: true
       });
 
-      // Add to recent public battles
       await safeRPSDatabase('addRecentBattle', {
         id: battleResult.id,
         player1Id: lobby.creator.userId,
         player1Username: lobby.creator.username,
         player1Avatar: lobby.creator.profilePicture || '/default-avatar.png',
         player1Move: moveData.move,
-        player2Id: null, // Bot has no user ID
+        player2Id: null,
         player2Username: 'Bot',
         player2Avatar: '/images/bot.png',
         player2Move: botMove,
@@ -1840,7 +1776,6 @@ io.on('connection', (socket) => {
 
       io.to(`rps-lobby-${moveData.lobbyId}`).emit('battle-result', battleResult);
       
-      // Refresh and broadcast updated history from database
       const freshHistory = await safeRPSDatabase('getBattleHistory', 10);
       if (freshHistory && Array.isArray(freshHistory)) {
         const formattedHistory = freshHistory.map(battle => ({
@@ -1879,7 +1814,6 @@ io.on('connection', (socket) => {
       
       console.log('✅ Bot battle completed:', battleResult.id, 'Winner:', winnerId);
     }
-    // Handle PvP game (player vs player)
     else if (lobby.status === 'ready') {
       if (!gameState.rps.activeBattles.has(moveData.lobbyId)) {
         gameState.rps.activeBattles.set(moveData.lobbyId, {
@@ -2100,45 +2034,38 @@ io.on('connection', (socket) => {
     }
   });
 
-  // FIXED DISCONNECT HANDLING
+  // DISCONNECT HANDLING
   socket.on('disconnect', (reason) => {
     try {
       console.log(`User disconnected: ${socket.id} (${reason})`);
       
-      // Remove from chat online users
       if (socket.userData?.id) {
         gameState.chat.onlineUsers.delete(socket.userData.id);
         broadcastOnlineUserCount();
         console.log(`💬 Removed ${socket.userData.username} from chat. Online users: ${gameState.chat.onlineUsers.size}`);
       }
       
-      // Clean up dice game
       if (gameState.dice.players.has(socket.id)) {
         const player = gameState.dice.players.get(socket.id);
         gameState.dice.players.delete(socket.id);
         console.log(`🎲 Removed player ${player?.username} from dice game`);
         
-        // Continuation from Part 1 - starting from the disconnect handler
-
         io.to('dice-room').emit('player-left', {
           playerId: socket.id,
           username: player?.username
         });
       }
       
-      // FIXED: DON'T remove crash players on disconnect - they should stay in game
       const userId = gameState.crash.socketToUser.get(socket.id);
       if (userId && gameState.crash.players.has(userId)) {
         const player = gameState.crash.players.get(userId);
         console.log(`🚀 Player ${player?.username} disconnected but bet remains active in game`);
         
-        // Update socket mapping but keep bet active
         gameState.crash.socketToUser.delete(socket.id);
         if (player) {
-          player.socketId = null; // Mark as disconnected but keep bet
+          player.socketId = null;
         }
         
-        // Only remove from UI if game is completely finished
         if (!gameState.crash.currentGame || gameState.crash.currentGame.phase === 'complete') {
           gameState.crash.players.delete(userId);
           io.to('crash-room').emit('crash-player-left', {
@@ -2149,7 +2076,6 @@ io.on('connection', (socket) => {
         }
       }
       
-      // Clean up RPS lobbies
       if (socket.lobbyId) {
         const lobby = gameState.rps.lobbies.get(socket.lobbyId);
         if (lobby && lobby.creator.socketId === socket.id) {
@@ -2167,7 +2093,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// DICE GAME FUNCTIONS (unchanged - working version)
+// DICE GAME FUNCTIONS
 function startDiceGameLoop() {
   console.log('🎲 Starting optimized dice game loop...');
   startNewDiceGame();
@@ -2182,7 +2108,6 @@ async function startNewDiceGame() {
   gameState.dice.isProcessing = true;
   console.log('🎲 Starting new dice game...');
   
-  // Only clear dice timers and state, don't touch crash game
   clearDiceTimers();
   cleanupDiceState();
   
@@ -2329,8 +2254,21 @@ async function completeDiceGame() {
   const gameId = gameState.dice.currentGame.id;
   console.log(`🎲 Game ${gameId} - completing game`);
 
+  // IMPROVED DICE RESULT WITH CLIENT SEED INTEGRATION
+  const defaultClientSeed = 'default-client-seed';
+  let clientSeed = defaultClientSeed;
+  
+  // Try to get client seed from first player
+  if (gameState.dice.players.size > 0) {
+    const firstPlayer = Array.from(gameState.dice.players.values())[0];
+    if (firstPlayer.clientSeed) {
+      clientSeed = firstPlayer.clientSeed;
+    }
+  }
+
   const diceResult = generateProvablyFairDiceResult(
     gameState.dice.currentGame.serverSeed,
+    clientSeed,
     gameState.dice.currentGame.nonce
   );
 
@@ -2356,7 +2294,7 @@ async function completeDiceGame() {
                     (!diceResult.isOdd && player.choice === 'even');
     
     if (isWinner) {
-      const payout = player.amount * 1.96;
+      const payout = player.amount * 1.96; // 4% house edge (50% win rate)
       totalPayout += payout;
       
       winners.push({
@@ -2399,6 +2337,7 @@ async function completeDiceGame() {
     isOdd: diceResult.isOdd,
     serverSeed: gameState.dice.currentGame.serverSeed,
     hashedSeed: gameState.dice.currentGame.hashedSeed,
+    clientSeed: clientSeed,
     winners,
     losers,
     totalWagered,
@@ -2438,6 +2377,7 @@ async function completeDiceGame() {
         diceValue: diceResult.value,
         isOdd: diceResult.isOdd,
         serverSeed: gameState.dice.currentGame.serverSeed,
+        clientSeed: clientSeed,
         winners,
         losers
       }
@@ -2456,14 +2396,13 @@ async function completeDiceGame() {
   }, 2000);
 }
 
-// FIXED CRASH GAME IMPLEMENTATION - PREVENT MULTIPLE GAMES
+// IMPROVED CRASH GAME IMPLEMENTATION WITH PROPER FAIRNESS
 function startCrashGameLoop() {
-  console.log('🚀 Starting professional crash game loop...');
+  console.log('🚀 Starting crash game loop with improved fairness...');
   startNewCrashGame();
 }
 
 async function startNewCrashGame() {
-  // PREVENT MULTIPLE GAMES WITH LOCK
   if (gameState.crash.isProcessing || gameState.crash.isGameLocked) {
     console.log('🚀 Crash game already being processed or locked, skipping...');
     return;
@@ -2471,9 +2410,8 @@ async function startNewCrashGame() {
 
   gameState.crash.isProcessing = true;
   gameState.crash.isGameLocked = true;
-  console.log('🚀🆕 Starting new crash game...');
+  console.log('🚀🆕 Starting new crash game with improved algorithm...');
   
-  // Clear previous game state only if game is complete
   clearCrashTimers();
   cleanupCrashState();
   
@@ -2492,12 +2430,9 @@ async function startNewCrashGame() {
     result: null,
     createdAt: new Date(),
     nonce: gameState.crash.gameCounter,
-    crashPoint: generateProvablyFairCrashPoint(serverSeed, gameState.crash.gameCounter)
+    crashPoint: null // Will be calculated when flying starts
   };
 
-  console.log(`🚀🎯 Crash point calculated: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
-
-  // Database save with retry logic
   let retryCount = 0;
   let dbSuccess = false;
   
@@ -2526,7 +2461,6 @@ async function startNewCrashGame() {
 
   console.log(`🚀📡 Broadcasting new crash game: ${gameId}`);
   
-  // Broadcast new game
   io.to('crash-room').emit('new-crash-game', {
     gameId,
     hashedSeed,
@@ -2544,7 +2478,6 @@ async function startNewCrashGame() {
 
   console.log(`🚀✅ Game ${gameId} started - betting phase (25 seconds)`);
 
-  // Start betting countdown
   gameState.crash.bettingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
       console.log('🚀 Game state changed, clearing betting interval');
@@ -2555,10 +2488,8 @@ async function startNewCrashGame() {
 
     gameState.crash.currentGame.timeLeft--;
     
-    // Broadcast timer updates
     io.to('crash-room').emit('crash-timer-update', gameState.crash.currentGame.timeLeft);
     
-    // Periodic state updates
     if (gameState.crash.currentGame.timeLeft % 5 === 0) {
       io.to('crash-room').emit('crash-game-state', {
         gameId: gameState.crash.currentGame.id,
@@ -2589,15 +2520,36 @@ function startCrashFlying() {
   }
 
   const gameId = gameState.crash.currentGame.id;
-  console.log(`🚀🚀 Game ${gameId} - ROCKET LAUNCHING!`);
-  console.log(`🚀🎯 Target crash point: ${gameState.crash.currentGame.crashPoint.toFixed(2)}x`);
+  console.log(`🚀🚀 Game ${gameId} - ROCKET LAUNCHING WITH IMPROVED FAIRNESS!`);
+  
+  // CALCULATE CRASH POINT WITH CLIENT SEED INTEGRATION
+  const defaultClientSeed = 'default-client-seed';
+  let clientSeed = defaultClientSeed;
+  
+  // Try to get client seed from first player
+  if (gameState.crash.players.size > 0) {
+    const firstPlayer = Array.from(gameState.crash.players.values())[0];
+    if (firstPlayer.clientSeed) {
+      clientSeed = firstPlayer.clientSeed;
+    }
+  }
+
+  // INDUSTRY STANDARD CRASH ALGORITHM
+  const crashPoint = generateProvablyFairCrashPoint(
+    gameState.crash.currentGame.serverSeed,
+    clientSeed,
+    gameState.crash.currentGame.nonce
+  );
+
+  gameState.crash.currentGame.crashPoint = crashPoint;
+  
+  console.log(`🚀🎯 Target crash point calculated: ${crashPoint.toFixed(2)}x`);
   
   gameState.crash.currentGame.phase = 'flying';
   gameState.crash.currentMultiplier = 1.00;
   gameState.crash.startTime = Date.now();
   gameState.crash.crashed = false;
 
-  // Notify all players rocket launched
   io.to('crash-room').emit('crash-flying-start');
   io.to('crash-room').emit('crash-game-state', {
     gameId: gameState.crash.currentGame.id,
@@ -2609,7 +2561,6 @@ function startCrashFlying() {
 
   console.log(`🚀🔥 Game ${gameId} - ROCKET IS FLYING!`);
 
-  // Professional multiplier calculation with smooth progression
   gameState.crash.flyingInterval = setInterval(() => {
     if (!gameState.crash.currentGame || gameState.crash.currentGame.id !== gameId) {
       console.log('🚀 Game state changed, clearing flying interval');
@@ -2628,28 +2579,22 @@ function startCrashFlying() {
     const elapsed = Date.now() - gameState.crash.startTime;
     const timeInSeconds = elapsed / 1000;
     
-    // Professional multiplier calculation
-    // Uses exponential growth with realistic acceleration
+    // Professional multiplier calculation with smooth progression
     let newMultiplier;
     
     if (timeInSeconds < 1) {
-      // Initial acceleration phase (0-1 seconds)
-      newMultiplier = 1.00 + (timeInSeconds * 0.1);
+      newMultiplier = 1.00 + (timeInSeconds * 0.05);
     } else if (timeInSeconds < 5) {
-      // Normal growth phase (1-5 seconds)
-      newMultiplier = 1.10 + ((timeInSeconds - 1) * 0.08) + ((timeInSeconds - 1) * (timeInSeconds - 1) * 0.005);
+      newMultiplier = 1.05 + ((timeInSeconds - 1) * 0.04) + ((timeInSeconds - 1) * (timeInSeconds - 1) * 0.003);
     } else {
-      // Extended growth phase (5+ seconds)
-      const baseGrowth = 1.10 + (4 * 0.08) + (4 * 4 * 0.005); // Value at 5 seconds
+      const baseGrowth = 1.05 + (4 * 0.04) + (4 * 4 * 0.003);
       const extendedTime = timeInSeconds - 5;
-      newMultiplier = baseGrowth + (extendedTime * 0.15) + (extendedTime * extendedTime * 0.008);
+      newMultiplier = baseGrowth + (extendedTime * 0.08) + (extendedTime * extendedTime * 0.005);
     }
     
-    // Ensure minimum increment and smooth progression
     newMultiplier = Math.max(newMultiplier, gameState.crash.currentMultiplier + 0.01);
     gameState.crash.currentMultiplier = Math.round(newMultiplier * 100) / 100;
 
-    // Broadcast multiplier update
     io.to('crash-room').emit('crash-multiplier-update', {
       currentMultiplier: gameState.crash.currentMultiplier
     });
@@ -2659,13 +2604,13 @@ function startCrashFlying() {
       gameState.crash.crashed = true;
       clearInterval(gameState.crash.flyingInterval);
       gameState.crash.flyingInterval = null;
-      console.log(`🚀💥 Game ${gameId} - CRASHED at ${gameState.crash.currentMultiplier.toFixed(2)}x!`);
+      console.log(`🚀💥 Game ${gameId} - CRASHED at ${gameState.crash.currentMultiplier.toFixed(2)}x! (Target was ${gameState.crash.currentGame.crashPoint.toFixed(2)}x)`);
       completeCrashGame();
       return;
     }
 
-    // Safety timeout after 3 minutes
-    if (elapsed > 180000) {
+    // Safety timeout after 5 minutes (for extremely high multipliers)
+    if (elapsed > 300000) {
       console.log(`🚀⏰ Game ${gameId} - Safety timeout reached, forcing crash`);
       gameState.crash.crashed = true;
       clearInterval(gameState.crash.flyingInterval);
@@ -2707,7 +2652,6 @@ async function completeCrashGame() {
     totalWagered += player.amount;
     
     if (player.isCashedOut && player.cashOutAt <= finalCrashPoint) {
-      // Player successfully cashed out before crash
       totalPayout += player.payout;
       winners.push({
         ...player,
@@ -2716,7 +2660,6 @@ async function completeCrashGame() {
       
       console.log(`🚀🏆 Winner: ${player.username} cashed out at ${player.cashOutAt.toFixed(2)}x for ${player.payout.toFixed(2)} USDC`);
     } else if (!player.isCashedOut) {
-      // Player didn't cash out, lost their bet
       losers.push(player);
       
       dbOperations.push(
@@ -2726,7 +2669,6 @@ async function completeCrashGame() {
       
       console.log(`🚀😔 Loser: ${player.username} lost ${player.amount} USDC (didn't cash out)`);
     } else {
-      // Player tried to cash out after crash
       losers.push(player);
       console.log(`🚀😔 Loser: ${player.username} lost ${player.amount} USDC (too late)`);
     }
@@ -2755,7 +2697,6 @@ async function completeCrashGame() {
     timestamp: new Date()
   };
 
-  // Save game result to database
   try {
     await safeCrashDatabase('completeGame', gameId, {
       crashPoint: finalCrashPoint,
@@ -2767,15 +2708,14 @@ async function completeCrashGame() {
     console.error(`🚀❌ Error completing crash game in database:`, error);
   }
 
-  // Update history
   gameState.crash.history.unshift(gameResult);
   if (gameState.crash.history.length > 50) {
     gameState.crash.history = gameState.crash.history.slice(0, 50);
   }
 
   console.log(`🚀📈 Game ${gameId} completed - ${winners.length} winners, ${losers.length} losers, ${totalWagered} wagered, ${totalPayout} paid out`);
+  console.log(`🚀💰 House Edge: ${((totalWagered - totalPayout) / totalWagered * 100).toFixed(2)}%`);
 
-  // Broadcast results
   try {
     io.to('crash-room').emit('crash-result', gameResult);
     
@@ -2798,13 +2738,11 @@ async function completeCrashGame() {
 
   console.log(`🚀✅ Game ${gameId} - all results broadcast`);
 
-  // Mark game as complete and clear players
   gameState.crash.currentGame.phase = 'complete';
   cleanupCrashState();
   gameState.crash.isProcessing = false;
   gameState.crash.isGameLocked = false;
   
-  // Start next game after delay
   setTimeout(() => {
     console.log(`🚀🔄 Starting next crash game after completion of ${gameId}`);
     startNewCrashGame();
@@ -2818,6 +2756,10 @@ httpServer.listen(port, '0.0.0.0', () => {
   console.log(`💾 Database: ${UserDatabase && DiceDatabase && CrashDatabase && RPSDatabase ? 'Connected' : 'Mock mode'}`);
   console.log(`🎯 Points System: ACTIVE (10 points per USD wagered)`);
   console.log(`📈 Experience System: ACTIVE (1 XP per USD wagered)`);
+  console.log(`🔐 IMPROVED PROVABLY FAIR ALGORITHMS ACTIVE:`);
+  console.log(`   🎲 Dice: Industry standard with client seed integration`);
+  console.log(`   🚀 Crash: Professional algorithm with proper house edge`);
+  console.log(`   🏆 RPS: Enhanced randomness with HMAC`);
   
   // Start all game loops
   startDiceGameLoop();
