@@ -1,5 +1,6 @@
 // /Users/macbook/Documents/n1verse/src/lib/database.ts
 import mysql from 'mysql2/promise';
+import crypto from 'crypto';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST?.split(':')[0] || 'db-fde-02.sparkedhost.us',
@@ -62,6 +63,8 @@ export async function initializeDatabase() {
         points BIGINT DEFAULT 0,
         experience INT DEFAULT 0,
         level INT DEFAULT 1,
+        beta_code_id VARCHAR(36) DEFAULT NULL,
+        has_beta_access TINYINT(1) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_active BOOLEAN DEFAULT TRUE,
@@ -70,9 +73,43 @@ export async function initializeDatabase() {
         INDEX idx_created_at (created_at),
         INDEX idx_points (points),
         INDEX idx_level (level),
-        INDEX idx_experience (experience)
+        INDEX idx_experience (experience),
+        INDEX idx_beta_code_id (beta_code_id),
+        CONSTRAINT users_beta_code_fk FOREIGN KEY (beta_code_id) REFERENCES beta_codes (id) ON DELETE SET NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // Beta codes table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS beta_codes (
+        id VARCHAR(36) NOT NULL PRIMARY KEY,
+        code VARCHAR(6) NOT NULL UNIQUE,
+        is_used TINYINT(1) DEFAULT 0,
+        used_by VARCHAR(36) DEFAULT NULL,
+        used_at TIMESTAMP NULL DEFAULT NULL,
+        created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NULL DEFAULT NULL,
+        KEY idx_is_used (is_used),
+        KEY idx_used_by (used_by),
+        CONSTRAINT beta_codes_ibfk_1 FOREIGN KEY (used_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Check if beta_code_id column exists in users table, add if not
+    const [columns] = await connection.execute(
+      `SHOW COLUMNS FROM users WHERE Field = 'beta_code_id'`
+    );
+    
+    if ((columns as any[]).length === 0) {
+      // Add beta_code_id and has_beta_access columns to users table
+      await connection.execute(`
+        ALTER TABLE users
+        ADD COLUMN beta_code_id VARCHAR(36) DEFAULT NULL AFTER level,
+        ADD COLUMN has_beta_access TINYINT(1) DEFAULT 0 AFTER beta_code_id,
+        ADD KEY idx_beta_code_id (beta_code_id),
+        ADD CONSTRAINT users_beta_code_fk FOREIGN KEY (beta_code_id) REFERENCES beta_codes (id) ON DELETE SET NULL
+      `);
+    }
 
     // Dice games table
     await connection.execute(`
@@ -292,6 +329,112 @@ export async function initializeDatabase() {
   }
 }
 
+// Beta Code Database Operations
+export class BetaCodeDatabase {
+  static async getCodeByValue(code: string) {
+    const connection = await pool.getConnection();
+    try {
+      const [codes] = await connection.execute(
+        'SELECT * FROM beta_codes WHERE code = ?',
+        [code]
+      );
+      return (codes as any[])[0] || null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getCodeById(codeId: string) {
+    const connection = await pool.getConnection();
+    try {
+      const [codes] = await connection.execute(
+        'SELECT * FROM beta_codes WHERE id = ?',
+        [codeId]
+      );
+      return (codes as any[])[0] || null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async markCodeAsUsed(codeId: string, userId: string) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        'UPDATE beta_codes SET is_used = 1, used_by = ?, used_at = NOW() WHERE id = ?',
+        [userId, codeId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async createCode(code: string, expiresAt?: Date) {
+    const connection = await pool.getConnection();
+    try {
+      const id = 'bc_' + crypto.randomBytes(16).toString('hex');
+      await connection.execute(
+        'INSERT INTO beta_codes (id, code, expires_at) VALUES (?, ?, ?)',
+        [id, code, expiresAt || null]
+      );
+      return id;
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getUnusedCodes(limit: number = 100) {
+    const connection = await pool.getConnection();
+    try {
+      const [codes] = await connection.execute(
+        `SELECT * FROM beta_codes 
+         WHERE is_used = 0 AND (expires_at IS NULL OR expires_at > NOW())
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [limit]
+      );
+      return codes as any[];
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getUsedCodes(limit: number = 100) {
+    const connection = await pool.getConnection();
+    try {
+      const [codes] = await connection.execute(
+        `SELECT bc.*, u.username 
+         FROM beta_codes bc
+         LEFT JOIN users u ON bc.used_by = u.id
+         WHERE bc.is_used = 1
+         ORDER BY bc.used_at DESC
+         LIMIT ?`,
+        [limit]
+      );
+      return codes as any[];
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async getCodeStats() {
+    const connection = await pool.getConnection();
+    try {
+      const [stats] = await connection.execute(`
+        SELECT 
+          COUNT(*) as total_codes,
+          SUM(is_used) as used_codes,
+          SUM(CASE WHEN is_used = 0 THEN 1 ELSE 0 END) as unused_codes,
+          SUM(CASE WHEN expires_at < NOW() THEN 1 ELSE 0 END) as expired_codes
+        FROM beta_codes
+      `);
+      return (stats as any[])[0];
+    } finally {
+      connection.release();
+    }
+  }
+}
+
 // User operations
 export class UserDatabase {
   static async createUser(userData: {
@@ -301,13 +444,24 @@ export class UserDatabase {
     walletAddress: string;
     referralCode?: string;
     profilePicture: string;
+    betaCodeId?: string;
+    hasBetaAccess?: boolean;
   }) {
     const connection = await pool.getConnection();
     try {
       await connection.execute(
-        `INSERT INTO users (id, username, email, wallet_address, referral_code, profile_picture, points, experience, level)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1)`,
-        [userData.id, userData.username, userData.email || null, userData.walletAddress, userData.referralCode || null, userData.profilePicture]
+        `INSERT INTO users (id, username, email, wallet_address, referral_code, profile_picture, points, experience, level, beta_code_id, has_beta_access)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`,
+        [
+          userData.id, 
+          userData.username, 
+          userData.email || null, 
+          userData.walletAddress, 
+          userData.referralCode || null, 
+          userData.profilePicture,
+          userData.betaCodeId || null,
+          userData.hasBetaAccess ? 1 : 0
+        ]
       );
       
       return await this.getUserByWallet(userData.walletAddress);
@@ -342,22 +496,46 @@ export class UserDatabase {
     }
   }
 
-  static async updateUserBalance(userId: string, amount: number, operation: 'add' | 'subtract' = 'add') {
+  static async getUserByUsername(username: string) {
     const connection = await pool.getConnection();
     try {
-      const operator = operation === 'add' ? '+' : '-';
-      await connection.execute(
-        `UPDATE users SET balance = balance ${operator} ?, last_active = CURRENT_TIMESTAMP WHERE id = ?`,
-        [Math.abs(amount), userId]
+      const [rows] = await connection.execute(
+        'SELECT * FROM users WHERE username = ?',
+        [username]
       );
+      return (rows as any[])[0] || null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  static async updateUserBalance(userId: string, amount: number, operation: 'add' | 'subtract' | 'set' = 'add') {
+    const connection = await pool.getConnection();
+    try {
+      let query: string;
       
+      if (operation === 'set') {
+        query = 'UPDATE users SET balance = ?, last_active = CURRENT_TIMESTAMP WHERE id = ?';
+        await connection.execute(query, [amount, userId]);
+      } else if (operation === 'add') {
+        query = 'UPDATE users SET balance = balance + ?, last_active = CURRENT_TIMESTAMP WHERE id = ?';
+        await connection.execute(query, [amount, userId]);
+      } else {
+        query = 'UPDATE users SET balance = balance - ?, last_active = CURRENT_TIMESTAMP WHERE id = ? AND balance >= ?';
+        const [result] = await connection.execute(query, [amount, userId, amount]);
+        if ((result as any).affectedRows === 0) {
+          throw new Error('Insufficient balance');
+        }
+      }
+      
+      // Return updated user
       return await this.getUserById(userId);
     } finally {
       connection.release();
     }
   }
 
-  static async updateUserStats(userId: string, wagered: number, won: number) {
+  static async updateUserStats(userId: string, wagered: number, won: number, gamesPlayed: number = 1) {
     const connection = await pool.getConnection();
     try {
       // Calculate points from wager (10 points per USD wagered)
@@ -368,12 +546,12 @@ export class UserDatabase {
         `UPDATE users SET 
          total_wagered = total_wagered + ?,
          total_won = total_won + ?,
-         games_played = games_played + 1,
+         games_played = games_played + ?,
          points = points + ?,
          experience = experience + ?,
          last_active = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [wagered, won, pointsEarned, experienceGained, userId]
+        [wagered, won, gamesPlayed, pointsEarned, experienceGained, userId]
       );
 
       // Update level based on new experience
@@ -392,6 +570,23 @@ export class UserDatabase {
     }
   }
 
+  static async updateUserPoints(userId: string, points: number, experience: number) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.execute(
+        `UPDATE users 
+         SET points = points + ?, 
+             experience = experience + ?,
+             level = FLOOR(experience / 800) + 1,
+             last_active = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [points, experience, userId]
+      );
+    } finally {
+      connection.release();
+    }
+  }
+
   static async updateProfilePicture(userId: string, profilePicture: string) {
     const connection = await pool.getConnection();
     try {
@@ -405,16 +600,34 @@ export class UserDatabase {
     }
   }
 
+  static async getActiveUsers(limit: number = 10) {
+    const connection = await pool.getConnection();
+    try {
+      const [users] = await connection.execute(
+        `SELECT id, username, wallet_address, profile_picture, balance, 
+                total_wagered, total_won, games_played, points, level, has_beta_access
+         FROM users 
+         WHERE is_active = 1 AND has_beta_access = 1
+         ORDER BY last_active DESC 
+         LIMIT ?`,
+        [limit]
+      );
+      return users as any[];
+    } finally {
+      connection.release();
+    }
+  }
+
   static async getLeaderboard(limit: number = 100) {
     const connection = await pool.getConnection();
     try {
       const [rows] = await connection.execute(
         `SELECT 
           id, username, profile_picture, points, experience, level, 
-          total_wagered, total_won, games_played, created_at,
+          total_wagered, total_won, games_played, created_at, has_beta_access,
           ROW_NUMBER() OVER (ORDER BY points DESC, total_wagered DESC) as rank_position
          FROM users 
-         WHERE is_active = TRUE 
+         WHERE is_active = TRUE AND has_beta_access = 1
          ORDER BY points DESC, total_wagered DESC 
          LIMIT ?`,
         [limit]
@@ -425,15 +638,13 @@ export class UserDatabase {
     }
   }
 
-  
-
   static async getUserRank(userId: string) {
     const connection = await pool.getConnection();
     try {
       const [rows] = await connection.execute(
         `SELECT rank_position FROM (
           SELECT id, ROW_NUMBER() OVER (ORDER BY points DESC, total_wagered DESC) as rank_position
-          FROM users WHERE is_active = TRUE
+          FROM users WHERE is_active = TRUE AND has_beta_access = 1
         ) ranked WHERE id = ?`,
         [userId]
       );
@@ -1070,6 +1281,105 @@ export class ChatDatabase {
         [limit]
       );
       return (rows as any[]).reverse();
+    } finally {
+      connection.release();
+    }
+  }
+}
+
+// Game Database for backwards compatibility
+export class GameDatabase {
+  static async createDiceGame(gameData: {
+    id: string;
+    serverSeed: string;
+    hashedSeed: string;
+    publicSeed: string;
+    nonce: number;
+  }) {
+    return DiceDatabase.createGame(gameData);
+  }
+
+  static async updateDiceGameResult(gameId: string, diceValue: number, isOdd: boolean) {
+    // This method might need additional parameters for total wagered, payout, and players count
+    // You may need to calculate these values before calling completeGame
+    return DiceDatabase.completeGame(gameId, {
+      diceValue,
+      isOdd,
+      totalWagered: 0, // You'll need to calculate this
+      totalPayout: 0,  // You'll need to calculate this
+      playersCount: 0  // You'll need to calculate this
+    });
+  }
+
+  static async createDiceBet(betData: {
+    id: string;
+    gameId: string;
+    userId: string;
+    amount: number;
+    choice: 'odd' | 'even';
+  }) {
+    return DiceDatabase.placeBet(betData);
+  }
+
+  static async updateDiceBetResult(betId: string, isWinner: boolean, payout: number) {
+    return DiceDatabase.updateBetResult(betId, isWinner, payout);
+  }
+
+  static async getDiceGameHistory(limit: number = 10) {
+    return DiceDatabase.getGameHistory(limit);
+  }
+}
+
+// Admin Database for dashboard statistics  
+export class AdminDatabase {
+  static async getDashboardStats() {
+    const connection = await pool.getConnection();
+    try {
+      // Get user stats
+      const [userStats] = await connection.execute(`
+        SELECT 
+          COUNT(*) as total_users,
+          SUM(CASE WHEN last_active > DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 ELSE 0 END) as active_users,
+          SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) as new_today
+        FROM users
+        WHERE has_beta_access = 1
+      `);
+
+      // Get financial stats
+      const [financialStats] = await connection.execute(`
+        SELECT 
+          SUM(total_wagered - total_won) as total_revenue,
+          SUM(CASE WHEN DATE(last_active) = CURDATE() THEN total_wagered - total_won ELSE 0 END) as today_revenue
+        FROM users
+        WHERE has_beta_access = 1
+      `);
+
+      // Get dice game stats
+      const [diceStats] = await connection.execute(`
+        SELECT 
+          COUNT(*) as total_games,
+          SUM(total_wagered) as total_wagered,
+          SUM(total_payout) as total_payout
+        FROM dice_games
+        WHERE status = 'complete'
+      `);
+
+      // Get crash game stats
+      const [crashStats] = await connection.execute(`
+        SELECT 
+          COUNT(*) as total_games,
+          SUM(total_wagered) as total_wagered,
+          SUM(total_payout) as total_payout
+        FROM crash_games
+        WHERE status = 'complete'
+      `);
+
+      return {
+        users: (userStats as any[])[0],
+        financial: (financialStats as any[])[0],
+        dice: (diceStats as any[])[0],
+        crash: (crashStats as any[])[0]
+      };
     } finally {
       connection.release();
     }
